@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>رادار الحيتان والشارت — الساعي للكريبتو</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Tajawal', sans-serif; background-color: #0f172a; color: #f8fafc; }
+    .tg-card { background-color: #1e293b; border: 1px solid #334155; }
+    .tg-input { background-color: #0f172a; border: 1px solid #334155; color: #ffffff; }
+    .tg-input:focus { border-color: #38bdf8; outline: none; }
+    .tab-btn { transition: all 0.2s ease; }
+    .tab-btn.active { background-color: #0284c7; color: #ffffff; border-color: #38bdf8; box-shadow: 0 4px 12px rgba(2, 132, 199, 0.35); }
+    .accordion-body { transition: max-height 0.25s ease; }
+    .chevron { transition: transform 0.2s ease; }
+    .chevron.open { transform: rotate(180deg); }
+    .dir-ltr { direction: ltr; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between p-3.5 selection:bg-sky-500 selection:text-white pb-10">
+
+  <!-- بطاقة قفل الصلاحيات -->
+  <div id="authLockCard" class="hidden w-full max-w-md mx-auto my-auto tg-card rounded-2xl p-6 text-center space-y-3 shadow-2xl border-rose-500/30">
+    <div class="inline-flex items-center justify-center p-4 bg-rose-500/10 rounded-full text-rose-500 border border-rose-500/20 mb-2">
+      <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m0 0v2m0-2h2m-2 0H10m12-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+    </div>
+    <h2 class="text-lg font-bold text-rose-400">⚠️ الوصول محظور</h2>
+    <p class="text-xs text-gray-400 leading-relaxed">عذراً، هذا التطبيق مخصص لأعضاء محددين فقط ولا تملك صلاحية لاستخدامه.</p>
+  </div>
+
+  <!-- التطبيق الرئيسي -->
+  <div id="appContainer" class="w-full max-w-md mx-auto space-y-3.5">
+
+    <!-- الهيدر -->
+    <div class="text-center space-y-1">
+      <div class="inline-flex items-center justify-center p-2.5 bg-sky-500/10 rounded-2xl mb-1 border border-sky-500/20 shadow-lg">
+        <span class="text-2xl">📡</span>
+      </div>
+      <h1 class="text-lg font-extrabold text-white tracking-wide">الساعي للكريبتو ★★★</h1>
+      <p class="text-xs text-sky-400 font-semibold">فاحص الشارت والسيولة والحيتان</p>
+    </div>
+
+    <!-- شريط البحث وزر الفحص -->
+    <div class="tg-card rounded-2xl p-3.5 space-y-3 shadow-xl">
+      <div class="flex items-center gap-2">
+        <input
+          type="text"
+          id="symbol"
+          value="BMT"
+          placeholder="اسم العملة (مثال: BMT أو BTC)"
+          onkeydown="if(event.key==='Enter') runInspection()"
+          class="tg-input flex-1 p-3 rounded-xl text-sm font-bold text-center uppercase placeholder-gray-500"
+        >
+        <button
+          id="scanBtn"
+          type="button"
+          onclick="runInspection()"
+          class="px-5 py-3 rounded-xl font-extrabold text-white text-sm bg-gradient-to-r from-sky-500 to-blue-600 shadow-lg shadow-sky-500/25 active:scale-95 transition-all whitespace-nowrap"
+        >
+          فحص 🔍
+        </button>
+      </div>
+
+      <!-- اختيار المدة الزمنية لفحص الصفقات -->
+      <div class="flex items-center justify-between gap-2 pt-0.5">
+        <span class="text-[11px] font-bold text-gray-400">فترة سحب الصفقات:</span>
+        <div class="grid grid-cols-3 gap-1.5 bg-slate-900 p-1 rounded-xl border border-slate-800 w-44">
+          <button type="button" onclick="setHours(1)" id="h-1" class="tab-btn py-1.5 text-[11px] font-bold rounded-lg text-gray-400">1س</button>
+          <button type="button" onclick="setHours(4)" id="h-4" class="tab-btn active py-1.5 text-[11px] font-bold rounded-lg text-gray-400">4س</button>
+          <button type="button" onclick="setHours(12)" id="h-12" class="tab-btn py-1.5 text-[11px] font-bold rounded-lg text-gray-400">12س</button>
+        </div>
+      </div>
+
+      <!-- شريط التقدم عند الفحص -->
+      <div id="statusBox" class="hidden bg-slate-900/95 border border-sky-500/30 rounded-xl p-2.5 space-y-1.5">
+        <div id="statusText" class="text-xs font-bold text-sky-400 text-center">جاري تجهيز الفحص...</div>
+        <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+          <div id="progressBar" class="bg-sky-500 h-full transition-all duration-300" style="width: 15%"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- القوائم المنسدلة بعد الفحص -->
+    <div id="accordionsWrapper" class="hidden space-y-3">
+
+      <!-- القائمة المنسدلة الأولى: شارت TradingView -->
+      <div class="tg-card rounded-2xl overflow-hidden shadow-xl border-sky-500/25">
+        <button
+          type="button"
+          onclick="toggleAccordion('chart')"
+          class="w-full flex items-center justify-between p-3.5 text-right bg-slate-800/80 hover:bg-slate-800 transition"
+        >
+          <div class="flex items-center gap-2">
+            <span class="text-base">📈</span>
+            <span class="text-sm font-extrabold text-white">1. شارت TradingView</span>
+            <span id="chartPairBadge" class="text-[11px] bg-sky-500/15 text-sky-400 px-2 py-0.5 rounded-full border border-sky-500/25 font-bold dir-ltr">BINANCE:BMTUSDT</span>
+          </div>
+          <svg id="chevron-chart" class="chevron w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"></path>
+          </svg>
+        </button>
+
+        <div id="panel-chart" class="p-3 bg-slate-950/70 border-t border-slate-700/70 space-y-2">
+          <div id="tv_chart_container" class="w-full h-[380px] rounded-xl overflow-hidden border border-slate-800 bg-slate-950"></div>
+          <p class="text-[10px] text-gray-500 text-center">شارت TradingView المجاني للعملة المحددة (يمكن طيه أو فتحه متى شئت).</p>
+        </div>
+      </div>
+
+      <!-- القائمة المنسدلة الثانية: بيانات الحيتان وتمركز السيولة -->
+      <div class="tg-card rounded-2xl overflow-hidden shadow-xl border-amber-500/25">
+        <button
+          type="button"
+          onclick="toggleAccordion('data')"
+          class="w-full flex items-center justify-between p-3.5 text-right bg-slate-800/80 hover:bg-slate-800 transition"
+        >
+          <div class="flex items-center gap-2">
+            <span class="text-base">🐋</span>
+            <span class="text-sm font-extrabold text-white">2. بيانات الحيتان والسيولة</span>
+            <span id="tradesCountBadge" class="text-[11px] bg-amber-500/15 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/25 font-bold">0 صفقة</span>
+          </div>
+          <svg id="chevron-data" class="chevron open w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"></path>
+          </svg>
+        </button>
+
+        <div id="panel-data" class="hidden p-3.5 bg-slate-950/60 border-t border-slate-700/70 space-y-3.5">
+
+          <!-- ملخص أوامر السوق vs الحدي -->
+          <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 space-y-2.5">
+            <div class="flex justify-between items-center text-xs">
+              <span class="font-bold text-sky-400">ملخص التنفيذ (سوق vs حدي)</span>
+              <span id="periodLabel" class="text-[11px] text-gray-400 font-bold">آخر 4 ساعات</span>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 text-center">
+              <div class="bg-emerald-950/40 border border-emerald-500/30 rounded-xl p-2">
+                <div class="text-[11px] text-emerald-400 font-bold">🟢 شراء سوق (Taker Buy)</div>
+                <div id="mBuyVol" class="text-sm font-extrabold text-white mt-0.5 dir-ltr">$0</div>
+                <div id="mBuyCnt" class="text-[10px] text-gray-400">0 صفقة</div>
+              </div>
+              <div class="bg-rose-950/40 border border-rose-500/30 rounded-xl p-2">
+                <div class="text-[11px] text-rose-400 font-bold">🔴 بيع سوق (Taker Sell)</div>
+                <div id="mSellVol" class="text-sm font-extrabold text-white mt-0.5 dir-ltr">$0</div>
+                <div id="mSellCnt" class="text-[10px] text-gray-400">0 صفقة</div>
+              </div>
+            </div>
+
+            <div class="flex justify-between items-center bg-slate-950 px-3 py-2 rounded-lg border border-slate-800/90 text-xs">
+              <span class="text-gray-300 font-bold">⚖️ صافي الدلتا:</span>
+              <span id="netDeltaVal" class="font-extrabold dir-ltr">$0</span>
+            </div>
+            <p class="text-[10px] text-gray-500 leading-relaxed">
+              ملاحظة: الطرف المقابل لأمر السوق المنفذ هو أمر حدي (Limit) انتظر في دفتر الأوامر وتم تنفيذه.
+            </p>
+          </div>
+
+          <!-- تمركز الطلبات -->
+          <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 space-y-2">
+            <h3 class="text-xs font-extrabold text-amber-400">🎯 أين تركزت الطلبات (مناطق السيولة)</h3>
+            <div class="overflow-x-auto">
+              <table class="w-full text-[11px] text-right border-collapse">
+                <thead>
+                  <tr class="text-gray-400 border-b border-slate-800">
+                    <th class="py-1.5 font-bold">النطاق السعري</th>
+                    <th class="py-1.5 font-bold text-center">الحجم ($)</th>
+                    <th class="py-1.5 font-bold text-left">غلبة الشراء</th>
+                  </tr>
+                </thead>
+                <tbody id="zonesTableBody" class="divide-y divide-slate-800/80"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- أغلى الصفقات -->
+          <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 space-y-2">
+            <h3 class="text-xs font-extrabold text-sky-400">🔥 أغلى الصفقات المنفذة</h3>
+            <div class="overflow-x-auto">
+              <table class="w-full text-[11px] text-right border-collapse">
+                <thead>
+                  <tr class="text-gray-400 border-b border-slate-800">
+                    <th class="py-1.5 font-bold">القيمة</th>
+                    <th class="py-1.5 font-bold text-center">الكمية</th>
+                    <th class="py-1.5 font-bold text-center">السعر</th>
+                    <th class="py-1.5 font-bold text-left">النوع</th>
+                  </tr>
+                </thead>
+                <tbody id="highestTableBody" class="divide-y divide-slate-800/80"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- الكميات المتكررة -->
+          <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 space-y-2">
+            <h3 class="text-xs font-extrabold text-purple-400">🔁 الكميات المتكررة</h3>
+            <div id="repeatedQtyList" class="space-y-1.5 text-xs"></div>
+          </div>
+
+          <!-- القيم المتكررة -->
+          <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 space-y-2">
+            <h3 class="text-xs font-extrabold text-teal-400">💵 القيم المتكررة (~USDT)</h3>
+            <div id="repeatedValList" class="space-y-1.5 text-xs"></div>
+          </div>
+
+          <!-- أقل الصفقات -->
+          <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 space-y-2">
+            <h3 class="text-xs font-extrabold text-gray-400">🔹 أقل الصفقات المسجلة</h3>
+            <div id="lowestList" class="space-y-1.5 text-[11px] text-gray-300"></div>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    const allowedIds = ["8477440923", "7536915802", "8298463733"];
+    let tg = window.Telegram ? window.Telegram.WebApp : null;
+    let selectedHours = 4;
+    let tvScriptLoaded = false;
+    let currentTvSymbol = "";
+
+    window.addEventListener('DOMContentLoaded', () => {
+      if (tg) {
+        tg.expand();
+        const user = tg.initDataUnsafe && tg.initDataUnsafe.user;
+        if (user && user.id) {
+          if (!allowedIds.includes(user.id.toString())) {
+            document.getElementById('appContainer').classList.add('hidden');
+            document.getElementById('authLockCard').classList.remove('hidden');
+          }
+        }
+      }
+    });
+
+    function setHours(h) {
+      selectedHours = h;
+      [1, 4, 12].forEach(val => document.getElementById(`h-${val}`).classList.remove('active'));
+      document.getElementById(`h-${h}`).classList.add('active');
+    }
+
+    function toggleAccordion(key) {
+      const panel = document.getElementById(`panel-${key}`);
+      const chevron = document.getElementById(`chevron-${key}`);
+      const isHidden = panel.classList.contains('hidden');
+      if (isHidden) {
+        panel.classList.remove('hidden');
+        chevron.classList.add('open');
+        if (key === 'chart' && currentTvSymbol) {
+          mountTradingViewChart(currentTvSymbol);
+        }
+      } else {
+        panel.classList.add('hidden');
+        chevron.classList.remove('open');
+      }
+    }
+
+    function mountTradingViewChart(symbol) {
+      const container = document.getElementById('tv_chart_container');
+      const fullSymbol = `BINANCE:${symbol}`;
+      document.getElementById('chartPairBadge').innerText = fullSymbol;
+      container.innerHTML = "";
+
+      const initWidget = () => {
+        if (!window.TradingView) return;
+        new window.TradingView.widget({
+          autosize: true,
+          symbol: fullSymbol,
+          interval: "240",
+          timezone: "Asia/Riyadh",
+          theme: "dark",
+          style: "1",
+          locale: "ar",
+          enable_publishing: false,
+          hide_top_toolbar: false,
+          allow_symbol_change: true,
+          container_id: "tv_chart_container"
+        });
+      };
+
+      if (tvScriptLoaded && window.TradingView) {
+        initWidget();
+      } else {
+        const script = document.createElement("script");
+        script.src = "https://s3.tradingview.com/tv.js";
+        script.async = true;
+        script.onload = () => {
+          tvScriptLoaded = true;
+          initWidget();
+        };
+        document.head.appendChild(script);
+      }
+    }
+
+    function fmtPrice(p) {
+      if (p >= 100) return p.toFixed(2);
+      if (p >= 1) return p.toFixed(4);
+      if (p >= 0.01) return p.toFixed(5);
+      return p.toFixed(7);
+    }
+
+    function fmtNum(n) {
+      if (n >= 1000000) return (n / 1000000).toFixed(2) + "M";
+      if (n >= 1000) return (n / 1000).toFixed(1) + "K";
+      return n.toFixed(1);
+    }
+
+    async function runInspection() {
+      let rawSym = document.getElementById('symbol').value.trim().toUpperCase();
+      if (!rawSym) {
+        alert('الرجاء إدخال رمز العملة أولاً');
+        return;
+      }
+      const symbol = rawSym.endsWith('USDT') ? rawSym : rawSym + 'USDT';
+      currentTvSymbol = symbol;
+
+      const scanBtn = document.getElementById('scanBtn');
+      const statusBox = document.getElementById('statusBox');
+      const statusText = document.getElementById('statusText');
+      const progressBar = document.getElementById('progressBar');
+      const accordionsWrapper = document.getElementById('accordionsWrapper');
+
+      scanBtn.disabled = true;
+      scanBtn.classList.add('opacity-60');
+      statusBox.classList.remove('hidden');
+      progressBar.style.width = "15%";
+      statusText.innerText = `جاري تجهيز شارت وبيانات ${symbol}...`;
+
+      // تجهيز شارت TradingView
+      const chartPanel = document.getElementById('panel-chart');
+      if (!chartPanel.classList.contains('hidden')) {
+        mountTradingViewChart(symbol);
+      } else {
+        document.getElementById('chartPairBadge').innerText = `BINANCE:${symbol}`;
+      }
+
+      const now = Date.now();
+      const startTime = now - selectedHours * 60 * 60 * 1000;
+      const baseUrl = "https://data-api.binance.vision/api/v3/aggTrades";
+
+      let trades = [];
+      let fromId = null;
+      const maxBatches = selectedHours === 12 ? 35 : (selectedHours === 4 ? 22 : 12);
+
+      try {
+        for (let b = 1; b <= maxBatches; b++) {
+          const pct = Math.min(92, 15 + Math.round((b / maxBatches) * 77));
+          progressBar.style.width = pct + "%";
+          statusText.innerText = `جاري سحب الصفقات (${trades.length.toLocaleString()})...`;
+
+          const url = fromId !== null
+            ? `${baseUrl}?symbol=${symbol}&limit=1000&fromId=${fromId}`
+            : `${baseUrl}?symbol=${symbol}&limit=1000&startTime=${startTime}&endTime=${now}`;
+
+          const res = await fetch(url);
+          if (!res.ok) throw new Error("تعذر جلب البيانات، تأكد من رمز العملة");
+          const data = await res.json();
+          if (!Array.isArray(data) || data.length === 0) break;
+
+          for (const t of data) {
+            if (t.T >= startTime && t.T <= now) {
+              const p = parseFloat(t.p);
+              const q = parseFloat(t.q);
+              trades.push({
+                p,
+                q,
+                val: p * q,
+                isMarketBuy: !t.m,
+                t: t.T
+              });
+            }
+          }
+
+          const last = data[data.length - 1];
+          if (last.T >= now || data.length < 1000) break;
+          fromId = last.a + 1;
+          await new Promise(r => setTimeout(r, 70));
+        }
+
+        populateWhaleData(symbol, trades);
+        progressBar.style.width = "100%";
+        statusText.innerText = "اكتمل الفحص بنجاح ✅";
+        accordionsWrapper.classList.remove('hidden');
+
+      } catch (err) {
+        alert("تنبيه: " + err.message);
+      } finally {
+        scanBtn.disabled = false;
+        scanBtn.classList.remove('opacity-60');
+        setTimeout(() => statusBox.classList.add('hidden'), 600);
+      }
+    }
+
+    function populateWhaleData(symbol, trades) {
+      document.getElementById('tradesCountBadge').innerText = `${trades.length.toLocaleString()} صفقة`;
+      document.getElementById('periodLabel').innerText = `آخر ${selectedHours} ${selectedHours === 1 ? 'ساعة' : 'ساعات'} (${symbol})`;
+
+      if (!trades.length) {
+        document.getElementById('mBuyVol').innerText = "$0";
+        document.getElementById('mSellVol').innerText = "$0";
+        document.getElementById('mBuyCnt').innerText = "0 صفقة";
+        document.getElementById('mSellCnt').innerText = "0 صفقة";
+        document.getElementById('netDeltaVal').innerText = "$0";
+        document.getElementById('zonesTableBody').innerHTML = '<tr><td colspan="3" class="py-3 text-center text-gray-500">لا توجد صفقات في هذه المدة</td></tr>';
+        document.getElementById('highestTableBody').innerHTML = '<tr><td colspan="4" class="py-3 text-center text-gray-500">لا توجد بيانات</td></tr>';
+        document.getElementById('repeatedQtyList').innerHTML = '<div class="text-gray-500 text-center py-1">لا يوجد تكرار</div>';
+        document.getElementById('repeatedValList').innerHTML = '<div class="text-gray-500 text-center py-1">لا يوجد تكرار</div>';
+        document.getElementById('lowestList').innerHTML = '<div class="text-gray-500 text-center py-1">لا توجد بيانات</div>';
+        return;
+      }
+
+      let mBuyVol = 0, mSellVol = 0, mBuyCnt = 0, mSellCnt = 0;
+      let minP = Infinity, maxP = -Infinity;
+
+      for (const tr of trades) {
+        if (tr.p < minP) minP = tr.p;
+        if (tr.p > maxP) maxP = tr.p;
+        if (tr.isMarketBuy) { mBuyVol += tr.val; mBuyCnt++; }
+        else { mSellVol += tr.val; mSellCnt++; }
+      }
+
+      document.getElementById('mBuyVol').innerText = `$${fmtNum(mBuyVol)}`;
+      document.getElementById('mBuyCnt').innerText = `${mBuyCnt.toLocaleString()} صفقة`;
+      document.getElementById('mSellVol').innerText = `$${fmtNum(mSellVol)}`;
+      document.getElementById('mSellCnt').innerText = `${mSellCnt.toLocaleString()} صفقة`;
+
+      const delta = mBuyVol - mSellVol;
+      const deltaEl = docum
