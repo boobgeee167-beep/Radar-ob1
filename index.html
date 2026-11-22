@@ -311,8 +311,8 @@
     async function runInspection() {
       let rawSym = document.getElementById('symbol').value.trim().toUpperCase();
       if (!rawSym) {
-        alert('الرجاء إدخال رمز العملة أولاً');
-        return;
+        rawSym = "BMT";
+        document.getElementById('symbol').value = "BMT";
       }
       const symbol = rawSym.endsWith('USDT') ? rawSym : rawSym + 'USDT';
       currentTvSymbol = symbol;
@@ -326,37 +326,57 @@
       scanBtn.disabled = true;
       scanBtn.classList.add('opacity-60');
       statusBox.classList.remove('hidden');
-      progressBar.style.width = "15%";
-      statusText.innerText = `جاري تجهيز شارت وبيانات ${symbol}...`;
+      progressBar.style.width = "20%";
+      statusText.innerText = `جاري فحص ${symbol}...`;
 
-      // تجهيز شارت TradingView
-      const chartPanel = document.getElementById('panel-chart');
-      if (!chartPanel.classList.contains('hidden')) {
+      accordionsWrapper.classList.remove('hidden');
+      document.getElementById('chartPairBadge').innerText = `BINANCE:${symbol}`;
+      if (!document.getElementById('panel-chart').classList.contains('hidden')) {
         mountTradingViewChart(symbol);
-      } else {
-        document.getElementById('chartPairBadge').innerText = `BINANCE:${symbol}`;
       }
 
       const now = Date.now();
       const startTime = now - selectedHours * 60 * 60 * 1000;
-      const baseUrl = "https://data-api.binance.vision/api/v3/aggTrades";
+      const endpoints = [
+        "https://data-api.binance.vision/api/v3/aggTrades",
+        "https://api.binance.com/api/v3/aggTrades"
+      ];
 
+      let activeBaseUrl = endpoints[0];
       let trades = [];
       let fromId = null;
       const maxBatches = selectedHours === 12 ? 35 : (selectedHours === 4 ? 22 : 12);
 
       try {
         for (let b = 1; b <= maxBatches; b++) {
-          const pct = Math.min(92, 15 + Math.round((b / maxBatches) * 77));
+          const pct = Math.min(92, 20 + Math.round((b / maxBatches) * 72));
           progressBar.style.width = pct + "%";
           statusText.innerText = `جاري سحب الصفقات (${trades.length.toLocaleString()})...`;
 
-          const url = fromId !== null
-            ? `${baseUrl}?symbol=${symbol}&limit=1000&fromId=${fromId}`
-            : `${baseUrl}?symbol=${symbol}&limit=1000&startTime=${startTime}&endTime=${now}`;
+          const buildUrl = (base) => fromId !== null
+            ? `${base}?symbol=${symbol}&limit=1000&fromId=${fromId}`
+            : `${base}?symbol=${symbol}&limit=1000&startTime=${startTime}&endTime=${now}`;
 
-          const res = await fetch(url);
-          if (!res.ok) throw new Error("تعذر جلب البيانات، تأكد من رمز العملة");
+          let res;
+          try {
+            res = await fetch(buildUrl(activeBaseUrl));
+            if (!res.ok && b === 1 && activeBaseUrl !== endpoints[1]) {
+              activeBaseUrl = endpoints[1];
+              res = await fetch(buildUrl(activeBaseUrl));
+            }
+          } catch (netErr) {
+            if (b === 1 && activeBaseUrl !== endpoints[1]) {
+              activeBaseUrl = endpoints[1];
+              res = await fetch(buildUrl(activeBaseUrl));
+            } else {
+              throw netErr;
+            }
+          }
+
+          if (!res || !res.ok) {
+            throw new Error(`استجابة الخادم غير ناجحة (${res ? res.status : 'بدون اتصال'}) للرمز ${symbol}`);
+          }
+
           const data = await res.json();
           if (!Array.isArray(data) || data.length === 0) break;
 
@@ -382,15 +402,19 @@
 
         populateWhaleData(symbol, trades);
         progressBar.style.width = "100%";
-        statusText.innerText = "اكتمل الفحص بنجاح ✅";
-        accordionsWrapper.classList.remove('hidden');
+        statusText.innerText = "اكتمل الفحص ✅";
 
       } catch (err) {
-        alert("تنبيه: " + err.message);
+        statusText.innerText = "تعذر سحب بيانات الصفقات ❌";
+        document.getElementById('panel-data').classList.remove('hidden');
+        document.getElementById('chevron-data').classList.add('open');
+        document.getElementById('tradesCountBadge').innerText = "خطأ";
+        document.getElementById('zonesTableBody').innerHTML =
+          `<tr><td colspan="3" class="py-3 text-center text-rose-400 font-bold">${err.message || "خطأ في الاتصال بالشبكة"}</td></tr>`;
       } finally {
         scanBtn.disabled = false;
         scanBtn.classList.remove('opacity-60');
-        setTimeout(() => statusBox.classList.add('hidden'), 600);
+        setTimeout(() => statusBox.classList.add('hidden'), 1200);
       }
     }
 
@@ -428,4 +452,81 @@
       document.getElementById('mSellCnt').innerText = `${mSellCnt.toLocaleString()} صفقة`;
 
       const delta = mBuyVol - mSellVol;
-      const deltaEl = docum
+      const deltaEl = document.getElementById('netDeltaVal');
+      deltaEl.innerText = delta >= 0 ? `+$${fmtNum(delta)}` : `-$${fmtNum(Math.abs(delta))}`;
+      deltaEl.className = `font-extrabold dir-ltr ${delta >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+
+      const range = (maxP - minP) || (maxP * 0.005);
+      const step = range / 8;
+      const zones = {};
+      for (const tr of trades) {
+        const idx = Math.min(7, Math.floor((tr.p - minP) / step));
+        const zLow = minP + idx * step;
+        const zHigh = zLow + step;
+        const key = `${fmtPrice(zLow)} - ${fmtPrice(zHigh)}`;
+        if (!zones[key]) zones[key] = { key, total: 0, buy: 0 };
+        zones[key].total += tr.val;
+        if (tr.isMarketBuy) zones[key].buy += tr.val;
+      }
+      const topZones = Object.values(zones).sort((a, b) => b.total - a.total).slice(0, 5);
+      document.getElementById('zonesTableBody').innerHTML = topZones.map(z => {
+        const pct = Math.round((z.buy / (z.total || 1)) * 100);
+        const color = pct >= 55 ? 'text-emerald-400' : (pct <= 45 ? 'text-rose-400' : 'text-amber-300');
+        return `
+          <tr>
+            <td class="py-2 dir-ltr text-right font-mono text-[10px] text-gray-200">${z.key}</td>
+            <td class="py-2 text-center font-bold text-white dir-ltr">$${fmtNum(z.total)}</td>
+            <td class="py-2 text-left font-extrabold ${color}">${pct}%</td>
+          </tr>`;
+      }).join('');
+
+      const sorted = [...trades].sort((a, b) => b.val - a.val);
+      const highest = sorted.slice(0, 6);
+      document.getElementById('highestTableBody').innerHTML = highest.map(x => `
+        <tr>
+          <td class="py-2 font-extrabold text-white dir-ltr text-right">$${x.val.toFixed(1)}</td>
+          <td class="py-2 text-center text-gray-300 dir-ltr">${fmtNum(x.q)}</td>
+          <td class="py-2 text-center text-gray-300 dir-ltr font-mono text-[10px]">${fmtPrice(x.p)}</td>
+          <td class="py-2 text-left font-bold ${x.isMarketBuy ? 'text-emerald-400' : 'text-rose-400'}">
+            ${x.isMarketBuy ? '🟢 شراء سوق' : '🔴 بيع سوق'}
+          </td>
+        </tr>`).join('');
+
+      const lowest = sorted.slice(-5).reverse();
+      document.getElementById('lowestList').innerHTML = lowest.map(x => `
+        <div class="flex justify-between items-center bg-slate-950/80 px-2.5 py-1.5 rounded-lg border border-slate-800">
+          <span class="dir-ltr font-bold text-gray-200">$${x.val.toFixed(3)} <span class="text-gray-500">(${x.q})</span></span>
+          <span class="${x.isMarketBuy ? 'text-emerald-400' : 'text-rose-400'} font-bold">${x.isMarketBuy ? 'شراء سوق' : 'بيع سوق'}</span>
+        </div>`).join('');
+
+      const qtyMap = {};
+      const valMap = {};
+      for (const tr of trades) {
+        if (tr.val >= 20) {
+          qtyMap[tr.q] = (qtyMap[tr.q] || 0) + 1;
+          const bucket = Math.round(tr.val / 25) * 25;
+          if (bucket >= 25) valMap[bucket] = (valMap[bucket] || 0) + 1;
+        }
+      }
+
+      const repQty = Object.entries(qtyMap).map(([q, c]) => ({ q, c })).filter(x => x.c > 1).sort((a, b) => b.c - a.c).slice(0, 5);
+      document.getElementById('repeatedQtyList').innerHTML = repQty.length
+        ? repQty.map(x => `
+            <div class="flex justify-between items-center bg-slate-950/80 px-3 py-2 rounded-lg border border-slate-800">
+              <span class="text-gray-200 font-bold dir-ltr">كمية: ${x.q}</span>
+              <span class="bg-purple-500/20 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded-full text-[11px] font-bold">تكررت ${x.c} مرة</span>
+            </div>`).join('')
+        : '<div class="text-gray-500 text-center py-1">لا يوجد تكرار كميات واضح</div>';
+
+      const repVal = Object.entries(valMap).map(([v, c]) => ({ v, c })).filter(x => x.c > 1).sort((a, b) => b.c - a.c).slice(0, 5);
+      document.getElementById('repeatedValList').innerHTML = repVal.length
+        ? repVal.map(x => `
+            <div class="flex justify-between items-center bg-slate-950/80 px-3 py-2 rounded-lg border border-slate-800">
+              <span class="text-gray-200 font-bold dir-ltr">~$${x.v}</span>
+              <span class="bg-teal-500/20 text-teal-300 border border-teal-500/30 px-2 py-0.5 rounded-full text-[11px] font-bold">تكرر ${x.c} مرة</span>
+            </div>`).join('')
+        : '<div class="text-gray-500 text-center py-1">لا يوجد تكرار قيم واضح</div>';
+    }
+  </script>
+</body>
+</html>
