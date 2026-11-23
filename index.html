@@ -1,19 +1,20 @@
 
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#0b1120">
+    <meta name="theme-color" content="#080e1b">
 
-    <title>Whale Radar | رادار الحيتان</title>
+    <title>WHALE RADAR</title>
 
     <!-- الخط -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
-    <!-- التنسيق -->
+    <!-- تصميم الواجهة -->
     <link rel="stylesheet" href="style.css">
 
     <!-- Telegram Mini App -->
@@ -26,8 +27,10 @@
 
         <!-- رأس التطبيق -->
         <header class="app-header">
+
             <div class="logo">
                 <span class="logo-icon">🐋</span>
+
                 <div>
                     <h1>WHALE RADAR</h1>
                     <p>رادار مراقبة نشاط السوق</p>
@@ -35,6 +38,7 @@
             </div>
 
             <span class="market-label">BINANCE SPOT</span>
+
         </header>
 
 
@@ -45,6 +49,7 @@
 
             <div class="form-group">
                 <label for="symbol">رمز العملة</label>
+
                 <input
                     type="text"
                     id="symbol"
@@ -53,18 +58,35 @@
                 >
             </div>
 
+
             <div class="form-group">
+
                 <label>الفترة الزمنية</label>
 
                 <div class="time-options">
-                    <button class="time-btn" data-period="1h">1 ساعة</button>
-                    <button class="time-btn active" data-period="4h">4 ساعات</button>
-                    <button class="time-btn" data-period="12h">12 ساعة</button>
-                    <button class="time-btn" data-period="custom">مخصص</button>
+
+                    <button class="time-btn" data-period="1h">
+                        1 ساعة
+                    </button>
+
+                    <button class="time-btn active" data-period="4h">
+                        4 ساعات
+                    </button>
+
+                    <button class="time-btn" data-period="12h">
+                        12 ساعة
+                    </button>
+
+                    <button class="time-btn" data-period="custom">
+                        مخصص
+                    </button>
+
                 </div>
+
             </div>
 
-            <!-- تحديد الفترة المخصصة -->
+
+            <!-- الفترة المخصصة -->
             <div id="custom-period" class="custom-period hidden">
 
                 <div class="form-group">
@@ -78,6 +100,7 @@
                 </div>
 
             </div>
+
 
             <button id="scan-btn" class="scan-button">
                 بدء فحص السوق
@@ -98,25 +121,30 @@
                     <span>شارت TradingView</span>
                 </button>
 
+
                 <button class="radar-button" data-tool="large-trades">
                     <span class="radar-icon">⚡</span>
                     <span>الصفقات الضخمة</span>
                 </button>
+
 
                 <button class="radar-button" data-tool="hidden-orders">
                     <span class="radar-icon">👁️</span>
                     <span>أنماط الأوامر المخفية المحتملة</span>
                 </button>
 
+
                 <button class="radar-button" data-tool="execution-clusters">
                     <span class="radar-icon">🧩</span>
                     <span>تجمعات التنفيذ</span>
                 </button>
 
+
                 <button class="radar-button" data-tool="capital-footprint">
                     <span class="radar-icon">🐋</span>
                     <span>بصمة نشاط رأس المال الكبير</span>
                 </button>
+
 
                 <button class="radar-button" data-tool="buy-sell-activity">
                     <span class="radar-icon">📈</span>
@@ -128,13 +156,13 @@
         </section>
 
 
-        <!-- مساحة عرض النتائج -->
+        <!-- مساحة النتائج -->
         <section id="results-section" class="results-section">
 
         </section>
 
 
-        <!-- تذييل التطبيق -->
+        <!-- التذييل -->
         <footer class="app-footer">
             WHALE RADAR
             <span>Market Intelligence</span>
@@ -142,7 +170,8 @@
 
     </main>
 
-    <!-- منطق التطبيق -->
+
+    <!-- مشغل التطبيق -->
     <script src="app.js"></script>
 
 </body>
