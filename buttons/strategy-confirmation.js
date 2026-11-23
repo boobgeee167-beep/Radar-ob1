@@ -671,7 +671,7 @@ export async function run(settings) {
                 title: "قراءة ممر الاقتراب",
 
                 text:
-                    position.crossedposition.crossed
+                    position.crossed
                         ? "تم تجاوز المنطقة خلال العينة؛ لذلك لا يُعرض الممر على أنه ممر اقتراب."
                         : position.location === "inside"
                             ? "السعر داخل المنطقة؛ قراءة التنفيذات المباشرة أهم من ممر خارجي."
