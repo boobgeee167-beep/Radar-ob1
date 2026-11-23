@@ -68,6 +68,122 @@ const escapeHTML = value =>
 
 
 /* =====================================
+   STRATEGY VERDICT
+===================================== */
+
+function getVerdictTone(evaluation) {
+
+    if (!evaluation) return "gold";
+
+    if (evaluation.tone) return evaluation.tone;
+
+    switch (evaluation.verdict) {
+        case "support":
+            return "buy";
+
+        case "oppose":
+            return "sell";
+
+        case "mixed":
+        case "insufficient":
+        default:
+            return "gold";
+    }
+}
+
+
+function getVerdictTitle(evaluation) {
+
+    if (!evaluation) {
+        return "الحكم الاستراتيجي غير متاح";
+    }
+
+    if (evaluation.title) {
+        return evaluation.title;
+    }
+
+    switch (evaluation.verdict) {
+        case "support":
+            return "الأدلة تميل إلى تأييد السيناريو";
+
+        case "oppose":
+            return "الأدلة تميل إلى معارضة السيناريو";
+
+        case "mixed":
+            return "الأدلة مختلطة";
+
+        case "insufficient":
+            return "الأدلة غير كافية";
+
+        default:
+            return "لا يوجد حكم استراتيجي واضح";
+    }
+}
+
+
+function normalizeReasons(evaluation) {
+
+    if (!Array.isArray(evaluation?.reasons)) {
+        return [];
+    }
+
+    return evaluation.reasons.map(reason => {
+
+        if (typeof reason === "string") {
+            return reason;
+        }
+
+        if (reason && typeof reason === "object") {
+            return reason.text ||
+                reason.explanation ||
+                reason.title ||
+                "";
+        }
+
+        return "";
+    }).filter(Boolean);
+}
+
+
+function buildStrategyVerdictSection(evaluation) {
+
+    if (!evaluation) {
+        return {
+            type: "note",
+            title: "الحكم الاستراتيجي",
+            text:
+                "لم يُرجع محرك التحليل حكماً استراتيجياً. " +
+                "المعلومات المعروضة أدناه تصف الأدلة المتاحة فقط."
+        };
+    }
+
+    const reasons = normalizeReasons(evaluation);
+
+    const explanation =
+        evaluation.explanation ||
+        "لم يقدم المحرك تفسيراً إضافياً للحكم.";
+
+    const reasonText = reasons.length
+        ? "\n\nالأسباب التي استند إليها الحكم:\n" +
+          reasons.map((reason, index) =>
+              `${index + 1}. ${reason}`
+          ).join("\n")
+        : "\n\nلم يقدم المحرك قائمة أسباب تفصيلية.";
+
+    return {
+        type: "note",
+        title: "الحكم الاستراتيجي للمحلل",
+        text:
+            `${getVerdictTitle(evaluation)}\n\n` +
+            `${explanation}` +
+            reasonText +
+            "\n\nهذا الحكم يصف مدى توافق الأدلة المرصودة مع سيناريو الصفقة، " +
+            "ولا يمثل احتمالاً رقمياً للنجاح أو أمراً بالدخول أو الامتناع."
+    };
+}
+
+
+/* =====================================
    DIRECTIONAL FLOW
 ===================================== */
 
@@ -333,7 +449,7 @@ function buildInterpretation(data) {
             title: "تحليل الممر السعري",
 
             text:
-                "السعر انتقل خلال العينة من جانب المنطقة إلى الجانب الآخر. لا نعامل ذلك كاقتراب حالي، بل كتجاوز تاريخي يحتاج إلى دراسة سياق الحركة."
+                "بدأت العينة وانتهت على جانبين مختلفين من المنطقة. هذا لا يثبت وحده المسار الذي سلكه السعر أو أنه عبر المنطقة فعلياً؛ لذلك نتعامل معه كسياق تاريخي يحتاج إلى فحص."
         });
 
     } else if (evidence.approach.count > 0) {
@@ -456,12 +572,20 @@ export async function run(settings) {
 
         const report = buildInterpretation(data);
 
-        const { market, evidence, strategy } = data;
+        const {
+            market,
+            evidence,
+            strategy,
+            evaluation
+        } = data;
 
         const zone = evidence.zone;
         const flow = report.flow;
         const large = report.large;
         const position = data.position;
+
+        const verdictTitle = getVerdictTitle(evaluation);
+        const verdictTone = getVerdictTone(evaluation);
 
         const totalZoneValue =
             zone.buyValue + zone.sellValue;
@@ -534,6 +658,13 @@ export async function run(settings) {
         const metrics = [
 
             {
+                label: "الحكم الاستراتيجي",
+                value: verdictTitle,
+                tone: verdictTone,
+                detail: "تقييم توافق الأدلة مع سيناريو الصفقة"
+            },
+
+            {
                 label: "اتجاه الصفقة",
                 value: directionName(direction),
                 tone: direction === "long" ? "buy" : "sell"
@@ -575,6 +706,19 @@ export async function run(settings) {
         ];
 
         const sections = [
+
+            buildStrategyVerdictSection(evaluation),
+
+            {
+                type: "note",
+                title: "كيف نقرأ هذا الحكم؟",
+
+                text:
+                    "الحكم الاستراتيجي يقارن الأدلة التاريخية المتاحة مع اتجاه الصفقة ومنطقة الدخول. " +
+                    "التأييد يعني أن بعض الأدلة تدعم السيناريو، والتعارض يعني وجود أدلة تستحق الحذر، " +
+                    "والمختلط يعني وجود إشارات في اتجاهات مختلفة، وغير الكافي يعني أن البيانات لا تسمح بحكم واضح. " +
+                    "ولا تعني أي نتيجة أن الصفقة ممنوعة أو أن نجاحها مضمون."
+            },
 
             {
                 type: "note",
@@ -672,7 +816,7 @@ export async function run(settings) {
 
                 text:
                     position.crossed
-                        ? "تم تجاوز المنطقة خلال العينة؛ لذلك لا يُعرض الممر على أنه ممر اقتراب."
+                        ? "بدأت العينة وانتهت على جانبين مختلفين من المنطقة؛ لا يمكن الجزم بالمسار الذي سلكه السعر اعتماداً على هاتين النقطتين فقط."
                         : position.location === "inside"
                             ? "السعر داخل المنطقة؛ قراءة التنفيذات المباشرة أهم من ممر خارجي."
                             : `${report.approachFlow.status}. ${report.approachFlow.explanation}`
@@ -726,12 +870,15 @@ export async function run(settings) {
                 title: "الخلاصة الاستراتيجية",
 
                 text:
+                    `الحكم الصادر عن المحرك: ${verdictTitle}. ` +
+                    `${evaluation?.explanation || ""} ` +
                     `حلل المحرك ${formatNumber(market.totalTrades)} تنفيذ خلال الفترة المختارة. ` +
                     `السعر المرجعي ${formatPrice(data.referencePrice.price)}، ` +
                     `وحالة المنطقة: ${position.status}. ` +
                     `قراءة المبادرة داخل المنطقة: ${flow.status}. ` +
                     `قراءة الممر: ${report.approachFlow.status}. ` +
-                    "هذه قراءة للأدلة المتاحة وليست احتمالاً لنجاح الصفقة أو أمراً بالدخول أو الامتناع عنه. القرار النهائي يبقى للمتداول."
+                    "هذا تقييم للأدلة المتاحة وليس احتمالاً لنجاح الصفقة أو أمراً بالدخول أو الامتناع عنها. " +
+                    "الرادار مستشار للتحليل والتأكيد فقط، والقرار النهائي يبقى للمتداول."
             }
 
         ];
@@ -764,4 +911,3 @@ export async function run(settings) {
     }
 }
 
-   
