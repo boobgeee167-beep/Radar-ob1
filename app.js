@@ -1,13 +1,7 @@
 
-/* =========================================
-   WHALE RADAR
-   Main Application Controller
-========================================= */
-
-
-/* =========================================
-   1. APPLICATION STATE
-========================================= */
+/* =====================================
+   WHALE RADAR - MAIN CONTROLLER
+===================================== */
 
 const WhaleRadar = {
 
@@ -29,7 +23,7 @@ const WhaleRadar = {
             .replace(/USDT$/, "");
 
         if (!symbol) {
-            showMessage("يرجى كتابة رمز العملة");
+            alert("يرجى كتابة رمز العملة");
             return null;
         }
 
@@ -47,7 +41,7 @@ const WhaleRadar = {
                 document.getElementById("end-date").value;
 
             if (!startValue || !endValue) {
-                showMessage("يرجى تحديد تاريخ البداية والنهاية");
+                alert("يرجى تحديد التاريخ والوقت");
                 return null;
             }
 
@@ -57,14 +51,10 @@ const WhaleRadar = {
             if (
                 !Number.isFinite(startTime) ||
                 !Number.isFinite(endTime) ||
-                startTime >= endTime
+                startTime >= endTime ||
+                endTime > Date.now()
             ) {
-                showMessage("الفترة الزمنية غير صحيحة");
-                return null;
-            }
-
-            if (endTime > Date.now()) {
-                showMessage("تاريخ النهاية لا يمكن أن يكون في المستقبل");
+                alert("الفترة الزمنية غير صحيحة");
                 return null;
             }
 
@@ -75,12 +65,39 @@ const WhaleRadar = {
         return settings;
     },
 
-    openTool(name) {
+    async loadTools() {
+
+        const modules = [
+            ["chart", "./buttons/chart.js"],
+            ["large-trades", "./buttons/large-trades.js"],
+            ["hidden-orders", "./buttons/hidden-orders.js"],
+            ["execution-clusters", "./buttons/execution-clusters.js"],
+            ["capital-footprint", "./buttons/capital-footprint.js"],
+            ["buy-sell-activity", "./buttons/buy-sell-activity.js"]
+        ];
+
+        for (const [name, path] of modules) {
+
+            try {
+                const module = await import(path);
+
+                if (typeof module.run === "function") {
+                    this.registerTool(name, module.run);
+                }
+
+            } catch (error) {
+                console.warn("Tool not loaded:", name, error);
+            }
+        }
+
+    },
+
+    async openTool(name) {
 
         const tool = this.tools[name];
 
-        if (typeof tool !== "function") {
-            showMessage("هذه الأداة لم تتم برمجتها بعد");
+        if (!tool) {
+            alert("هذه الأداة لم تتم إضافتها بعد");
             return;
         }
 
@@ -88,25 +105,20 @@ const WhaleRadar = {
 
         if (!settings) return;
 
-        tool(settings);
+        await tool(settings);
+
     }
 
 };
 
 
-/* =========================================
-   2. TIME PERIOD SELECTION
-========================================= */
+/* اختيار الفترة الزمنية */
 
-const timeButtons = document.querySelectorAll(".time-btn");
-
-const customPeriod = document.getElementById("custom-period");
-
-timeButtons.forEach(button => {
+document.querySelectorAll(".time-btn").forEach(button => {
 
     button.addEventListener("click", () => {
 
-        timeButtons.forEach(item => {
+        document.querySelectorAll(".time-btn").forEach(item => {
             item.classList.remove("active");
         });
 
@@ -114,79 +126,56 @@ timeButtons.forEach(button => {
 
         WhaleRadar.selectedPeriod = button.dataset.period;
 
-        if (WhaleRadar.selectedPeriod === "custom") {
-            customPeriod.classList.remove("hidden");
-        } else {
-            customPeriod.classList.add("hidden");
-        }
+        document.getElementById("custom-period")
+            .classList.toggle(
+                "hidden",
+                WhaleRadar.selectedPeriod !== "custom"
+            );
 
     });
 
 });
 
 
-/* =========================================
-   3. SCAN BUTTON
-========================================= */
+/* زر الفحص */
 
 document.getElementById("scan-btn")
     .addEventListener("click", () => {
 
         const settings = WhaleRadar.getSettings();
 
-        if (!settings) return;
-
-        console.log("WHALE RADAR SETTINGS:", settings);
-
-        showMessage("تم تجهيز إعدادات الفحص");
+        if (settings) {
+            console.log("Scan settings:", settings);
+            alert("تم تجهيز إعدادات الفحص");
+        }
 
     });
 
 
-/* =========================================
-   4. RADAR TOOLS
-========================================= */
+/* ربط أزرار الأدوات */
 
-const radarButtons = document.querySelectorAll(".radar-button");
-
-radarButtons.forEach(button => {
+document.querySelectorAll(".radar-button").forEach(button => {
 
     button.addEventListener("click", () => {
-
-        const toolName = button.dataset.tool;
-
-        WhaleRadar.openTool(toolName);
-
+        WhaleRadar.openTool(button.dataset.tool);
     });
 
 });
 
 
-/* =========================================
-   5. MESSAGE SYSTEM
-========================================= */
+/* Telegram Mini App */
 
-function showMessage(message) {
-    alert(message);
+if (window.Telegram?.WebApp) {
+    window.Telegram.WebApp.ready();
+    window.Telegram.WebApp.expand();
 }
 
 
-/* =========================================
-   6. TELEGRAM MINI APP
-========================================= */
+/* تحميل ملفات الأدوات */
 
-if (window.Telegram && window.Telegram.WebApp) {
-
-    const tg = window.Telegram.WebApp;
-
-    tg.ready();
-    tg.expand();
-
-}
+WhaleRadar.loadTools();
 
 
-/* =========================================
-   GLOBAL ACCESS
-========================================= */
+/* إتاحة المشغّل */
 
 window.WHALE_RADAR = WhaleRadar;
