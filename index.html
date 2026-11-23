@@ -14,7 +14,6 @@
     .tg-input:focus { border-color: #38bdf8; outline: none; }
     .tab-btn { transition: all 0.2s ease; }
     .tab-btn.active { background-color: #0284c7; color: #ffffff; border-color: #38bdf8; box-shadow: 0 4px 12px rgba(2, 132, 199, 0.35); }
-    .accordion-body { transition: max-height 0.25s ease; }
     .chevron { transition: transform 0.2s ease; }
     .chevron.open { transform: rotate(180deg); }
     .dir-ltr { direction: ltr; }
@@ -40,7 +39,7 @@
         <span class="text-2xl">📡</span>
       </div>
       <h1 class="text-lg font-extrabold text-white tracking-wide">الساعي للكريبتو ★★★</h1>
-      <p class="text-xs text-sky-400 font-semibold">فاحص الشارت والسيولة والحيتان</p>
+      <p class="text-xs text-sky-400 font-semibold">فاحص الشارت والسيولة والحيتان (فوق $500)</p>
     </div>
 
     <!-- شريط البحث وزر الفحص -->
@@ -64,13 +63,34 @@
         </button>
       </div>
 
-      <!-- اختيار المدة الزمنية لفحص الصفقات -->
-      <div class="flex items-center justify-between gap-2 pt-0.5">
-        <span class="text-[11px] font-bold text-gray-400">فترة سحب الصفقات:</span>
-        <div class="grid grid-cols-3 gap-1.5 bg-slate-900 p-1 rounded-xl border border-slate-800 w-44">
-          <button type="button" onclick="setHours(1)" id="h-1" class="tab-btn py-1.5 text-[11px] font-bold rounded-lg text-gray-400">1س</button>
-          <button type="button" onclick="setHours(4)" id="h-4" class="tab-btn active py-1.5 text-[11px] font-bold rounded-lg text-gray-400">4س</button>
-          <button type="button" onclick="setHours(12)" id="h-12" class="tab-btn py-1.5 text-[11px] font-bold rounded-lg text-gray-400">12س</button>
+      <!-- اختيار المدة الزمنية أو فترة محددة -->
+      <div class="space-y-2 pt-0.5">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-[11px] font-bold text-gray-400">الفترة الزمنية:</span>
+          <div class="grid grid-cols-4 gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 w-56">
+            <button type="button" onclick="setMode('1')" id="m-1" class="tab-btn py-1.5 text-[11px] font-bold rounded-lg text-gray-400">1س</button>
+            <button type="button" onclick="setMode('4')" id="m-4" class="tab-btn active py-1.5 text-[11px] font-bold rounded-lg text-gray-400">4س</button>
+            <button type="button" onclick="setMode('12')" id="m-12" class="tab-btn py-1.5 text-[11px] font-bold rounded-lg text-gray-400">12س</button>
+            <button type="button" onclick="setMode('custom')" id="m-custom" class="tab-btn py-1.5 text-[11px] font-bold rounded-lg text-gray-400">مخصص</button>
+          </div>
+        </div>
+
+        <!-- حقول الساعات المحددة (من - إلى) -->
+        <div id="customRangeBox" class="hidden bg-slate-900/90 border border-sky-500/30 rounded-xl p-2.5 space-y-2">
+          <div class="flex justify-between items-center text-[11px]">
+            <span class="font-bold text-sky-400">⏰ حدد فترة الساعات المطلوبة:</span>
+            <span class="text-[10px] text-gray-400">مثال: 12:30 إلى 15:45</span>
+          </div>
+          <div class="grid grid-cols-2 gap-2.5 dir-ltr">
+            <div>
+              <label class="block text-[10px] text-gray-400 mb-1 text-right">من الساعة</label>
+              <input type="time" id="startTimeInput" value="12:30" class="tg-input w-full p-2 rounded-lg text-xs font-bold text-center">
+            </div>
+            <div>
+              <label class="block text-[10px] text-gray-400 mb-1 text-right">إلى الساعة</label>
+              <input type="time" id="endTimeInput" value="15:45" class="tg-input w-full p-2 rounded-lg text-xs font-bold text-center">
+            </div>
+          </div>
         </div>
       </div>
 
@@ -192,15 +212,19 @@
             </div>
           </div>
 
-          <!-- الكميات المتكررة -->
+          <!-- الكميات المتكررة (فوق $500) -->
           <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 space-y-2">
-            <h3 class="text-xs font-extrabold text-purple-400">🔁 الكميات المتكررة</h3>
+            <div class="flex justify-between items-center">
+              <h3 class="text-xs font-extrabold text-purple-400">🔁 الكميات المتكررة (الكبار ≥ $500)</h3>
+            </div>
             <div id="repeatedQtyList" class="space-y-1.5 text-xs"></div>
           </div>
 
-          <!-- القيم المتكررة -->
+          <!-- القيم المتكررة (فوق $500) -->
           <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 space-y-2">
-            <h3 class="text-xs font-extrabold text-teal-400">💵 القيم المتكررة (~USDT)</h3>
+            <div class="flex justify-between items-center">
+              <h3 class="text-xs font-extrabold text-teal-400">💵 القيم المتكررة (الكبار ≥ $500)</h3>
+            </div>
             <div id="repeatedValList" class="space-y-1.5 text-xs"></div>
           </div>
 
@@ -219,7 +243,7 @@
   <script>
     const allowedIds = ["8477440923", "7536915802", "8298463733"];
     let tg = window.Telegram ? window.Telegram.WebApp : null;
-    let selectedHours = 4;
+    let timeMode = "4"; // "1" | "4" | "12" | "custom"
     let tvScriptLoaded = false;
     let currentTvSymbol = "";
 
@@ -236,10 +260,64 @@
       }
     });
 
-    function setHours(h) {
-      selectedHours = h;
-      [1, 4, 12].forEach(val => document.getElementById(`h-${val}`).classList.remove('active'));
-      document.getElementById(`h-${h}`).classList.add('active');
+    function setMode(mode) {
+      timeMode = mode;
+      ["1", "4", "12", "custom"].forEach(m => document.getElementById(`m-${m}`).classList.remove('active'));
+      document.getElementById(`m-${mode}`).classList.add('active');
+      const box = document.getElementById('customRangeBox');
+      if (mode === "custom") box.classList.remove('hidden');
+      else box.classList.add('hidden');
+    }
+
+    function getTimeWindow() {
+      const now = Date.now();
+      if (timeMode !== "custom") {
+        const hrs = Number(timeMode);
+        return {
+          startTime: now - hrs * 60 * 60 * 1000,
+          endTime: now,
+          label: `آخر ${hrs} ${hrs === 1 ? 'ساعة' : 'ساعات'}`,
+          maxBatches: hrs === 12 ? 35 : (hrs === 4 ? 22 : 12)
+        };
+      }
+
+      const startStr = document.getElementById('startTimeInput').value;
+      const endStr = document.getElementById('endTimeInput').value;
+      if (!startStr || !endStr) {
+        throw new Error("حدد وقت البداية ووقت النهاية (مثال: 12:30 إلى 15:45)");
+      }
+
+      const [sh, sm] = startStr.split(":").map(Number);
+      const [eh, em] = endStr.split(":").map(Number);
+
+      const dNow = new Date(now);
+      let startDate = new Date(dNow.getFullYear(), dNow.getMonth(), dNow.getDate(), sh, sm, 0, 0);
+      let endDate = new Date(dNow.getFullYear(), dNow.getMonth(), dNow.getDate(), eh, em, 59, 999);
+
+      // إذا وقت النهاية أصغر من وقت البداية، نعتبر الفترة تمتد لليوم التالي
+      if (endDate.getTime() <= startDate.getTime()) {
+        endDate.setDate(endDate.getDate() + 1);
+      }
+
+      // إذا وقت البداية في المستقبل بالنسبة للوقت الحالي، نرجعه ليوم أمس
+      if (startDate.getTime() > now && endDate.getTime() > now) {
+        startDate.setDate(startDate.getDate() - 1);
+        endDate.setDate(endDate.getDate() - 1);
+      }
+
+      const actualEnd = Math.min(now, endDate.getTime());
+      const actualStart = startDate.getTime();
+      if (actualStart >= actualEnd) {
+        throw new Error("الفترة المحددة غير صالحة أو لم تبدأ بعد");
+      }
+
+      const diffHours = Math.max(1, Math.ceil((actualEnd - actualStart) / (60 * 60 * 1000)));
+      return {
+        startTime: actualStart,
+        endTime: actualEnd,
+        label: `من ${startStr} إلى ${endStr}`,
+        maxBatches: Math.min(40, Math.max(12, diffHours * 5))
+      };
     }
 
     function toggleAccordion(key) {
@@ -326,8 +404,8 @@
       scanBtn.disabled = true;
       scanBtn.classList.add('opacity-60');
       statusBox.classList.remove('hidden');
-      progressBar.style.width = "20%";
-      statusText.innerText = `جاري فحص ${symbol}...`;
+      progressBar.style.width = "15%";
+      statusText.innerText = `جاري تجهيز فحص ${symbol}...`;
 
       accordionsWrapper.classList.remove('hidden');
       document.getElementById('chartPairBadge').innerText = `BINANCE:${symbol}`;
@@ -335,8 +413,6 @@
         mountTradingViewChart(symbol);
       }
 
-      const now = Date.now();
-      const startTime = now - selectedHours * 60 * 60 * 1000;
       const endpoints = [
         "https://data-api.binance.vision/api/v3/aggTrades",
         "https://api.binance.com/api/v3/aggTrades"
@@ -345,17 +421,19 @@
       let activeBaseUrl = endpoints[0];
       let trades = [];
       let fromId = null;
-      const maxBatches = selectedHours === 12 ? 35 : (selectedHours === 4 ? 22 : 12);
 
       try {
+        const win = getTimeWindow();
+        const { startTime, endTime, label, maxBatches } = win;
+
         for (let b = 1; b <= maxBatches; b++) {
-          const pct = Math.min(92, 20 + Math.round((b / maxBatches) * 72));
+          const pct = Math.min(92, 15 + Math.round((b / maxBatches) * 77));
           progressBar.style.width = pct + "%";
           statusText.innerText = `جاري سحب الصفقات (${trades.length.toLocaleString()})...`;
 
           const buildUrl = (base) => fromId !== null
             ? `${base}?symbol=${symbol}&limit=1000&fromId=${fromId}`
-            : `${base}?symbol=${symbol}&limit=1000&startTime=${startTime}&endTime=${now}`;
+            : `${base}?symbol=${symbol}&limit=1000&startTime=${startTime}&endTime=${endTime}`;
 
           let res;
           try {
@@ -374,14 +452,19 @@
           }
 
           if (!res || !res.ok) {
-            throw new Error(`استجابة الخادم غير ناجحة (${res ? res.status : 'بدون اتصال'}) للرمز ${symbol}`);
+            throw new Error(`تعذر جلب البيانات (${res ? res.status : 'بدون اتصال'}) للرمز ${symbol}`);
           }
 
           const data = await res.json();
           if (!Array.isArray(data) || data.length === 0) break;
 
+          let passedEndTime = false;
           for (const t of data) {
-            if (t.T >= startTime && t.T <= now) {
+            if (t.T > endTime) {
+              passedEndTime = true;
+              break;
+            }
+            if (t.T >= startTime && t.T <= endTime) {
               const p = parseFloat(t.p);
               const q = parseFloat(t.q);
               trades.push({
@@ -395,22 +478,22 @@
           }
 
           const last = data[data.length - 1];
-          if (last.T >= now || data.length < 1000) break;
+          if (passedEndTime || last.T >= endTime || data.length < 1000) break;
           fromId = last.a + 1;
           await new Promise(r => setTimeout(r, 70));
         }
 
-        populateWhaleData(symbol, trades);
+        populateWhaleData(symbol, trades, label);
         progressBar.style.width = "100%";
         statusText.innerText = "اكتمل الفحص ✅";
 
       } catch (err) {
-        statusText.innerText = "تعذر سحب بيانات الصفقات ❌";
+        statusText.innerText = "تعذر إتمام الفحص ❌";
         document.getElementById('panel-data').classList.remove('hidden');
         document.getElementById('chevron-data').classList.add('open');
-        document.getElementById('tradesCountBadge').innerText = "خطأ";
+        document.getElementById('tradesCountBadge').innerText = "تنبيه";
         document.getElementById('zonesTableBody').innerHTML =
-          `<tr><td colspan="3" class="py-3 text-center text-rose-400 font-bold">${err.message || "خطأ في الاتصال بالشبكة"}</td></tr>`;
+          `<tr><td colspan="3" class="py-3 text-center text-rose-400 font-bold">${err.message || "خطأ في الاتصال"}</td></tr>`;
       } finally {
         scanBtn.disabled = false;
         scanBtn.classList.remove('opacity-60');
@@ -418,9 +501,9 @@
       }
     }
 
-    function populateWhaleData(symbol, trades) {
+    function populateWhaleData(symbol, trades, label) {
       document.getElementById('tradesCountBadge').innerText = `${trades.length.toLocaleString()} صفقة`;
-      document.getElementById('periodLabel').innerText = `آخر ${selectedHours} ${selectedHours === 1 ? 'ساعة' : 'ساعات'} (${symbol})`;
+      document.getElementById('periodLabel').innerText = `${label} (${symbol})`;
 
       if (!trades.length) {
         document.getElementById('mBuyVol').innerText = "$0";
@@ -428,10 +511,10 @@
         document.getElementById('mBuyCnt').innerText = "0 صفقة";
         document.getElementById('mSellCnt').innerText = "0 صفقة";
         document.getElementById('netDeltaVal').innerText = "$0";
-        document.getElementById('zonesTableBody').innerHTML = '<tr><td colspan="3" class="py-3 text-center text-gray-500">لا توجد صفقات في هذه المدة</td></tr>';
+        document.getElementById('zonesTableBody').innerHTML = '<tr><td colspan="3" class="py-3 text-center text-gray-500">لا توجد صفقات في هذه الفترة</td></tr>';
         document.getElementById('highestTableBody').innerHTML = '<tr><td colspan="4" class="py-3 text-center text-gray-500">لا توجد بيانات</td></tr>';
-        document.getElementById('repeatedQtyList').innerHTML = '<div class="text-gray-500 text-center py-1">لا يوجد تكرار</div>';
-        document.getElementById('repeatedValList').innerHTML = '<div class="text-gray-500 text-center py-1">لا يوجد تكرار</div>';
+        document.getElementById('repeatedQtyList').innerHTML = '<div class="text-gray-500 text-center py-1">لا يوجد تكرار لصفقات ≥ $500</div>';
+        document.getElementById('repeatedValList').innerHTML = '<div class="text-gray-500 text-center py-1">لا يوجد تكرار لصفقات ≥ $500</div>';
         document.getElementById('lowestList').innerHTML = '<div class="text-gray-500 text-center py-1">لا توجد بيانات</div>';
         return;
       }
@@ -456,6 +539,7 @@
       deltaEl.innerText = delta >= 0 ? `+$${fmtNum(delta)}` : `-$${fmtNum(Math.abs(delta))}`;
       deltaEl.className = `font-extrabold dir-ltr ${delta >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
 
+      // تمركز الطلبات
       const range = (maxP - minP) || (maxP * 0.005);
       const step = range / 8;
       const zones = {};
@@ -480,6 +564,7 @@
           </tr>`;
       }).join('');
 
+      // أغلى الصفقات
       const sorted = [...trades].sort((a, b) => b.val - a.val);
       const highest = sorted.slice(0, 6);
       document.getElementById('highestTableBody').innerHTML = highest.map(x => `
@@ -492,6 +577,7 @@
           </td>
         </tr>`).join('');
 
+      // أقل الصفقات
       const lowest = sorted.slice(-5).reverse();
       document.getElementById('lowestList').innerHTML = lowest.map(x => `
         <div class="flex justify-between items-center bg-slate-950/80 px-2.5 py-1.5 rounded-lg border border-slate-800">
@@ -499,33 +585,35 @@
           <span class="${x.isMarketBuy ? 'text-emerald-400' : 'text-rose-400'} font-bold">${x.isMarketBuy ? 'شراء سوق' : 'بيع سوق'}</span>
         </div>`).join('');
 
+      // الكميات والقيم المتكررة — للكبار فقط (>= $500)
+      const MIN_WHALE_VAL = 500;
       const qtyMap = {};
       const valMap = {};
       for (const tr of trades) {
-        if (tr.val >= 20) {
+        if (tr.val >= MIN_WHALE_VAL) {
           qtyMap[tr.q] = (qtyMap[tr.q] || 0) + 1;
-          const bucket = Math.round(tr.val / 25) * 25;
-          if (bucket >= 25) valMap[bucket] = (valMap[bucket] || 0) + 1;
+          const bucket = Math.round(tr.val / 100) * 100;
+          valMap[bucket] = (valMap[bucket] || 0) + 1;
         }
       }
 
-      const repQty = Object.entries(qtyMap).map(([q, c]) => ({ q, c })).filter(x => x.c > 1).sort((a, b) => b.c - a.c).slice(0, 5);
+      const repQty = Object.entries(qtyMap).map(([q, c]) => ({ q, c })).filter(x => x.c > 1).sort((a, b) => b.c - a.c).slice(0, 6);
       document.getElementById('repeatedQtyList').innerHTML = repQty.length
         ? repQty.map(x => `
             <div class="flex justify-between items-center bg-slate-950/80 px-3 py-2 rounded-lg border border-slate-800">
               <span class="text-gray-200 font-bold dir-ltr">كمية: ${x.q}</span>
               <span class="bg-purple-500/20 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded-full text-[11px] font-bold">تكررت ${x.c} مرة</span>
             </div>`).join('')
-        : '<div class="text-gray-500 text-center py-1">لا يوجد تكرار كميات واضح</div>';
+        : '<div class="text-gray-500 text-center py-1">لا يوجد تكرار كميات في صفقات ≥ $500</div>';
 
-      const repVal = Object.entries(valMap).map(([v, c]) => ({ v, c })).filter(x => x.c > 1).sort((a, b) => b.c - a.c).slice(0, 5);
+      const repVal = Object.entries(valMap).map(([v, c]) => ({ v, c })).filter(x => x.c > 1).sort((a, b) => b.c - a.c).slice(0, 6);
       document.getElementById('repeatedValList').innerHTML = repVal.length
         ? repVal.map(x => `
             <div class="flex justify-between items-center bg-slate-950/80 px-3 py-2 rounded-lg border border-slate-800">
-              <span class="text-gray-200 font-bold dir-ltr">~$${x.v}</span>
+              <span class="text-gray-200 font-bold dir-ltr">~$${Number(x.v).toLocaleString()}</span>
               <span class="bg-teal-500/20 text-teal-300 border border-teal-500/30 px-2 py-0.5 rounded-full text-[11px] font-bold">تكرر ${x.c} مرة</span>
             </div>`).join('')
-        : '<div class="text-gray-500 text-center py-1">لا يوجد تكرار قيم واضح</div>';
+        : '<div class="text-gray-500 text-center py-1">لا يوجد تكرار قيم في صفقات ≥ $500</div>';
     }
   </script>
 </body>
