@@ -1,12 +1,11 @@
 
 /**
  * WHALE RADAR
- * CAPITAL FOOTPRINT ANALYZER
- *
- * تحليل مناطق تركّز التنفيذات الكبيرة.
- * تحديد مستويات الأسعار التي يتركز عندها رأس المال.
- * قياس اتجاه المبادرة الشرائية والبيعية.
+ * CAPITAL FOOTPRINT
+ * Central Data Engine Edition
  */
+
+import { fetchMarketData } from "../core/market-data.js";
 
 export async function run(settings) {
 
@@ -14,181 +13,108 @@ export async function run(settings) {
 
     results.innerHTML = `
         <div class="result-card">
-            <h3>🐋 تحليل بصمة رأس المال</h3>
-            <p>جارٍ بناء خريطة نشاط رأس المال الكبير...</p>
+            <h3>💰 رادار بصمة رأس المال</h3>
+            <p>جارٍ تحليل توزيع رؤوس الأموال على مستويات الأسعار...</p>
         </div>
     `;
 
     try {
 
-        const symbol = settings.symbol;
+        const market = await fetchMarketData(settings);
+        const trades = market.trades;
 
-        const url = new URL(
-            "https://data-api.binance.vision/api/v3/aggTrades"
+        if (!trades.length) {
+            throw new Error("لا توجد صفقات ضمن الفترة المحددة");
+        }
+
+        // استخراج أعلى 10% من التنفيذات حسب القيمة
+        const sortedTrades = [...trades].sort(
+            (a, b) => b.value - a.value
         );
 
-        url.searchParams.set("symbol", symbol);
-        url.searchParams.set("limit", "1000");
-
-        const response = await fetch(url);
-
-        if (!response.ok) {
-            throw new Error("تعذر الاتصال ببيانات Binance");
-        }
-
-        const rawTrades = await response.json();
-
-        if (!Array.isArray(rawTrades) || rawTrades.length === 0) {
-            throw new Error("لا توجد صفقات متاحة");
-        }
-
-        let trades = rawTrades.map(trade => ({
-            price: Number(trade.p),
-            quantity: Number(trade.q),
-            value: Number(trade.p) * Number(trade.q),
-            time: Number(trade.T),
-            buyerIsMaker: trade.m
-        }));
-
-        // تطبيق الفترة الزمنية المخصصة
-        if (
-            settings.period === "custom" &&
-            settings.startTime &&
-            settings.endTime
-        ) {
-
-            trades = trades.filter(trade =>
-                trade.time >= settings.startTime &&
-                trade.time <= settings.endTime
-            );
-
-        }
-
-        if (trades.length < 10) {
-            throw new Error("البيانات غير كافية لبناء البصمة");
-        }
-
-        trades.sort((a, b) => a.time - b.time);
-
-        // تحديد الحد النسبي للنشاط الكبير
-        const values = trades.map(trade => trade.value);
-
-        const sortedValues = [...values].sort((a, b) => a - b);
-
-        const percentileIndex = Math.floor(
-            (sortedValues.length - 1) * 0.90
+        const topCount = Math.max(
+            1,
+            Math.ceil(sortedTrades.length * 0.10)
         );
 
-        const largeThreshold = sortedValues[percentileIndex];
-
-        const largeTrades = trades.filter(
-            trade => trade.value >= largeThreshold
-        );
-
-        if (!largeTrades.length) {
-            throw new Error("لم يتم العثور على تنفيذات كبيرة");
-        }
+        const majorTrades = sortedTrades.slice(0, topCount);
 
         // تحديد نطاق الأسعار
-        const minPrice = Math.min(
-            ...largeTrades.map(trade => trade.price)
+        const prices = majorTrades.map(trade => trade.price);
+
+        const minPrice = Math.min(...prices);
+        const maxPrice = Math.max(...prices);
+
+        const LEVELS = 20;
+
+        const priceRange = maxPrice - minPrice;
+
+        const levelSize = priceRange > 0
+            ? priceRange / LEVELS
+            : 0;
+
+        const footprint = Array.from(
+            { length: LEVELS },
+            (_, index) => {
+
+                const lower = minPrice + index * levelSize;
+
+                return {
+                    lower,
+                    upper: lower + levelSize,
+                    buyValue: 0,
+                    sellValue: 0,
+                    count: 0
+                };
+
+            }
         );
 
-        const maxPrice = Math.max(
-            ...largeTrades.map(trade => trade.price)
-        );
+        // توزيع التنفيذات على المستويات السعرية
+        for (const trade of majorTrades) {
 
-        const range = maxPrice - minPrice;
-
-        const bucketCount = 20;
-
-        const bucketSize = range > 0
-            ? range / bucketCount
-            : Math.max(minPrice * 0.0001, Number.EPSILON);
-
-        const buckets = Array.from(
-            { length: bucketCount },
-            (_, index) => ({
-                index,
-                low: minPrice + index * bucketSize,
-                high: minPrice + (index + 1) * bucketSize,
-                totalValue: 0,
-                buyValue: 0,
-                sellValue: 0,
-                count: 0,
-                quantity: 0
-            })
-        );
-
-        // توزيع الصفقات على مستويات الأسعار
-        for (const trade of largeTrades) {
-
-            let index = range > 0
-                ? Math.floor((trade.price - minPrice) / bucketSize)
+            let index = priceRange > 0
+                ? Math.floor(
+                    (trade.price - minPrice) / levelSize
+                )
                 : 0;
 
-            index = Math.min(
-                bucketCount - 1,
-                Math.max(0, index)
-            );
+            index = Math.min(LEVELS - 1, Math.max(0, index));
 
-            const bucket = buckets[index];
+            const level = footprint[index];
 
-            bucket.totalValue += trade.value;
-            bucket.quantity += trade.quantity;
-            bucket.count++;
+            level.count++;
 
             if (trade.buyerIsMaker) {
-                bucket.sellValue += trade.value;
+                level.sellValue += trade.value;
             } else {
-                bucket.buyValue += trade.value;
+                level.buyValue += trade.value;
             }
 
         }
 
-        const activeBuckets = buckets
-            .filter(bucket => bucket.count > 0)
-            .map(bucket => ({
+        footprint.reverse();
 
-                ...bucket,
-
-                center: (bucket.low + bucket.high) / 2,
-
-                buyRatio: bucket.totalValue
-                    ? bucket.buyValue / bucket.totalValue * 100
-                    : 0,
-
-                sellRatio: bucket.totalValue
-                    ? bucket.sellValue / bucket.totalValue * 100
-                    : 0
-
-            }))
-            .sort((a, b) => b.totalValue - a.totalValue);
-
-        // حساب إجمالي النشاط
-        const totalCapital = largeTrades.reduce(
-            (sum, trade) => sum + trade.value,
+        // إجماليات رأس المال
+        const totalBuy = majorTrades.reduce(
+            (sum, trade) =>
+                sum + (trade.buyerIsMaker ? 0 : trade.value),
             0
         );
 
-        const totalBuy = largeTrades
-            .filter(trade => !trade.buyerIsMaker)
-            .reduce((sum, trade) => sum + trade.value, 0);
+        const totalSell = majorTrades.reduce(
+            (sum, trade) =>
+                sum + (trade.buyerIsMaker ? trade.value : 0),
+            0
+        );
 
-        const totalSell = largeTrades
-            .filter(trade => trade.buyerIsMaker)
-            .reduce((sum, trade) => sum + trade.value, 0);
+        const totalValue = totalBuy + totalSell;
 
-        const buyRatio = totalCapital
-            ? totalBuy / totalCapital * 100
-            : 0;
-
-        const sellRatio = totalCapital
-            ? totalSell / totalCapital * 100
-            : 0;
-
-        // تحديد منطقة تركّز رأس المال
-        const strongestZone = activeBuckets[0];
+        const strongestLevel = [...footprint].sort(
+            (a, b) =>
+                (b.buyValue + b.sellValue) -
+                (a.buyValue + a.sellValue)
+        )[0];
 
         const formatMoney = value =>
             "$" + value.toLocaleString("en-US", {
@@ -200,165 +126,127 @@ export async function run(settings) {
                 maximumFractionDigits: 8
             });
 
-        const formatTime = timestamp =>
-            new Date(timestamp).toLocaleString("ar");
+        // عرض مستويات الأسعار
+        const rows = footprint
+            .map(level => {
 
-        // عرض خريطة البصمة
-        const footprintHTML = activeBuckets
-            .slice(0, 15)
-            .map(bucket => {
+                const levelTotal =
+                    level.buyValue + level.sellValue;
 
-                const direction =
-                    bucket.buyRatio >= 65
-                        ? "شراء غالب"
-                        : bucket.sellRatio >= 65
-                            ? "بيع غالب"
-                            : "نشاط مختلط";
+                const buyPercent = levelTotal > 0
+                    ? (level.buyValue / levelTotal) * 100
+                    : 0;
 
-                const directionClass =
-                    bucket.buyRatio >= 65
-                        ? "buy"
-                        : bucket.sellRatio >= 65
-                            ? "sell"
-                            : "";
+                const sellPercent = levelTotal > 0
+                    ? (level.sellValue / levelTotal) * 100
+                    : 0;
 
                 return `
-
                     <div class="trade-row">
 
                         <div>
-                            <strong>
-                                ${formatPrice(bucket.low)}
-                                -
-                                ${formatPrice(bucket.high)}
-                            </strong>
-
-                            <small>${bucket.count} تنفيذات كبيرة</small>
+                            <strong>${formatPrice(level.upper)}</strong>
+                            <small>${formatPrice(level.lower)}</small>
                         </div>
 
                         <div>
-                            <strong>${formatMoney(bucket.totalValue)}</strong>
-                            <small>${formatPrice(bucket.quantity)} كمية</small>
+                            <strong>${formatMoney(levelTotal)}</strong>
+                            <small>${level.count} تنفيذ</small>
                         </div>
 
                         <div>
-                            <strong class="${directionClass}">
-                                ${direction}
+                            <strong class="buy">
+                                ${formatMoney(level.buyValue)}
                             </strong>
-
-                            <small>
-                                شراء ${bucket.buyRatio.toFixed(1)}%
-                                | بيع ${bucket.sellRatio.toFixed(1)}%
+                            <small class="sell">
+                                ${formatMoney(level.sellValue)}
                             </small>
                         </div>
 
-                    </div>
+                        <div>
+                            <small>شراء ${buyPercent.toFixed(1)}%</small>
+                            <small>بيع ${sellPercent.toFixed(1)}%</small>
+                        </div>
 
+                    </div>
                 `;
 
             }).join("");
-
-        // قياس انتشار النشاط بين المستويات
-        const activeLevelCount = activeBuckets.length;
-
-        const dominantRatio = totalCapital
-            ? strongestZone.totalValue / totalCapital * 100
-            : 0;
-
-        const marketBias =
-            buyRatio >= 60
-                ? "ميل شرائي في التنفيذات الكبيرة"
-                : sellRatio >= 60
-                    ? "ميل بيعي في التنفيذات الكبيرة"
-                    : "نشاط متوازن نسبياً";
 
         results.innerHTML = `
 
             <div class="result-card">
 
-                <h3>🐋 بصمة نشاط رأس المال الكبير</h3>
+                <h3>💰 تحليل بصمة رأس المال</h3>
 
                 <div class="trade-summary">
 
                     <div>
                         <small>العملة</small>
-                        <strong>${symbol}</strong>
+                        <strong>${market.symbol}</strong>
+                    </div>
+
+                    <div>
+                        <small>الصفقات المحللة</small>
+                        <strong>${market.totalTrades.toLocaleString()}</strong>
                     </div>
 
                     <div>
                         <small>التنفيذات الكبيرة</small>
-                        <strong>${largeTrades.length}</strong>
+                        <strong>${majorTrades.length.toLocaleString()}</strong>
                     </div>
 
                     <div>
-                        <small>المستويات النشطة</small>
-                        <strong>${activeLevelCount}</strong>
-                    </div>
-
-                    <div>
-                        <small>قيمة النشاط الكبير</small>
-                        <strong>${formatMoney(totalCapital)}</strong>
+                        <small>قيمة رأس المال المرصود</small>
+                        <strong>${formatMoney(totalValue)}</strong>
                     </div>
 
                 </div>
 
-                <h4>اتجاه المبادرة</h4>
+                <h4>توزيع رأس المال</h4>
 
                 <div class="trade-summary">
 
                     <div>
-                        <small>شراء مبادر</small>
-                        <strong>${buyRatio.toFixed(2)}%</strong>
+                        <small>الشراء المبادر</small>
+                        <strong class="buy">${formatMoney(totalBuy)}</strong>
                     </div>
 
                     <div>
-                        <small>بيع مبادر</small>
-                        <strong>${sellRatio.toFixed(2)}%</strong>
-                    </div>
-
-                    <div>
-                        <small>القراءة</small>
-                        <strong>${marketBias}</strong>
+                        <small>البيع المبادر</small>
+                        <strong class="sell">${formatMoney(totalSell)}</strong>
                     </div>
 
                 </div>
 
-                <h4>أقوى منطقة تركّز</h4>
+                <h4>أقوى منطقة تركّز لرأس المال</h4>
 
-                <div class="trade-summary">
+                <div class="analysis-note">
 
-                    <div>
-                        <small>النطاق السعري</small>
+                    <strong>
+                        ${formatPrice(strongestLevel.lower)}
+                        — ${formatPrice(strongestLevel.upper)}
+                    </strong>
 
-                        <strong>
-                            ${formatPrice(strongestZone.low)}
-                            -
-                            ${formatPrice(strongestZone.high)}
-                        </strong>
-                    </div>
-
-                    <div>
-                        <small>قيمة النشاط</small>
-                        <strong>${formatMoney(strongestZone.totalValue)}</strong>
-                    </div>
-
-                    <div>
-                        <small>نسبة النشاط</small>
-                        <strong>${dominantRatio.toFixed(2)}%</strong>
-                    </div>
+                    <p>
+                        إجمالي التنفيذات:
+                        ${formatMoney(
+                            strongestLevel.buyValue +
+                            strongestLevel.sellValue
+                        )}
+                    </p>
 
                 </div>
 
-                <h4>خريطة مستويات رأس المال</h4>
+                <h4>البصمة السعرية لرأس المال</h4>
 
-                ${footprintHTML}
+                ${rows}
 
                 <p class="analysis-note">
-                    تعتمد هذه البصمة على أعلى 10% من قيم التنفيذات
-                    داخل العينة الحالية، ثم توزيعها على مستويات سعرية.
-                    وهي تقيس تركّز نشاط التنفيذ، لا ملكية المحافظ
-                    ولا صافي التجميع الحقيقي.
-                    لا يمكن استنتاج أن جهة واحدة تقف خلف هذه العمليات.
+                    تم تحليل أعلى 10% من التنفيذات حسب القيمة،
+                    وتوزيعها على ${LEVELS} مستوى سعرياً.
+                    هذه بصمة تنفيذات تاريخية وليست دليلاً
+                    على ملكية رأس المال أو استمرار الأوامر في دفتر السوق.
                 </p>
 
             </div>
