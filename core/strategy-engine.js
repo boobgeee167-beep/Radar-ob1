@@ -783,35 +783,20 @@ function analyzeHistoricalInteraction(trades, zone) {
    MAIN STRATEGY ANALYSIS
 ===================================== */
 
+
 export async function analyzeStrategy(settings) {
 
+    const strategySettings = settings.strategy || {};
+
     const symbol = String(
-        getSettingsValue(settings, ["symbol", "coin", "pair"]) || ""
+        settings.symbol || ""
     ).trim().toUpperCase();
 
-    const upper = Number(
-        getSettingsValue(settings, [
-            "upper",
-            "obUpper",
-            "ob_upper",
-            "upperPrice"
-        ])
-    );
-
-    const lower = Number(
-        getSettingsValue(settings, [
-            "lower",
-            "obLower",
-            "ob_lower",
-            "lowerPrice"
-        ])
-    );
+    const upper = Number(strategySettings.upper);
+    const lower = Number(strategySettings.lower);
 
     const direction = String(
-        getSettingsValue(settings, [
-            "direction",
-            "tradeDirection"
-        ]) || "long"
+        strategySettings.direction || "long"
     ).toLowerCase();
 
     if (!symbol) {
@@ -837,7 +822,6 @@ export async function analyzeStrategy(settings) {
         direction
     };
 
-    // جلب البيانات التاريخية المحددة من المستخدم
     const market = await fetchMarketData(settings);
 
     const trades = validateTrades(market.trades);
@@ -846,32 +830,26 @@ export async function analyzeStrategy(settings) {
         throw new Error("لا توجد تنفيذات صالحة في الفترة المحددة");
     }
 
-    // آخر تنفيذ في الفترة هو مرجع السعر
     const referencePrice = analyzeReferencePrice(trades);
 
-    // تحديد موقع السعر من المنطقة
     const position = analyzeZonePosition(
         referencePrice,
         zone
     );
 
-    // الأدلة الأربعة على كامل الفترة
     const largeTrades = analyzeLargeTrades(trades);
     const clusters = analyzeClusters(trades);
     const capital = analyzeCapital(trades);
     const activity = analyzeActivity(trades);
 
-    // تحليل التنفيذات داخل المنطقة
     const zoneEvidence = analyzeZone(trades, zone);
 
-    // تحليل التنفيذات في الممر المؤدي للمنطقة
     const approach = analyzeApproach(
         trades,
         zone,
         position
     );
 
-    // تاريخ تفاعل السعر مع المنطقة
     const historicalInteraction =
         analyzeHistoricalInteraction(trades, zone);
 
