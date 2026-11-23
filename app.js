@@ -13,7 +13,7 @@ const WhaleRadar = {
         this.tools[name] = callback;
     },
 
-    getSettings() {
+    getSettings(requireStrategy = false) {
 
         const symbolInput = document.getElementById("symbol");
 
@@ -62,6 +62,47 @@ const WhaleRadar = {
             settings.endTime = endTime;
         }
 
+        /* إعدادات الاستراتيجية */
+
+        if (requireStrategy) {
+
+            const upperInput =
+                document.getElementById("ob-upper");
+
+            const lowerInput =
+                document.getElementById("ob-lower");
+
+            const upper = Number(upperInput?.value);
+            const lower = Number(lowerInput?.value);
+
+            if (
+                !upperInput?.value ||
+                !lowerInput?.value ||
+                !Number.isFinite(upper) ||
+                !Number.isFinite(lower) ||
+                upper <= 0 ||
+                lower <= 0 ||
+                upper < lower
+            ) {
+                alert("يرجى إدخال حدود منطقة Order Block بشكل صحيح");
+                return null;
+            }
+
+            const activeDirection =
+                document.querySelector(".direction-btn.active");
+
+            if (!activeDirection) {
+                alert("يرجى تحديد اتجاه الصفقة");
+                return null;
+            }
+
+            settings.strategy = {
+                upper: upper,
+                lower: lower,
+                direction: activeDirection.dataset.direction
+            };
+        }
+
         return settings;
     },
 
@@ -73,7 +114,9 @@ const WhaleRadar = {
             ["hidden-orders", "./buttons/hidden-orders.js"],
             ["execution-clusters", "./buttons/execution-clusters.js"],
             ["capital-footprint", "./buttons/capital-footprint.js"],
-            ["buy-sell-activity", "./buttons/buy-sell-activity.js"]
+            ["buy-sell-activity", "./buttons/buy-sell-activity.js"],
+
+            ["strategy-confirmation", "./buttons/strategy-confirmation.js"]
         ];
 
         for (const [name, path] of modules) {
@@ -101,7 +144,9 @@ const WhaleRadar = {
             return;
         }
 
-        const settings = this.getSettings();
+        const settings = this.getSettings(
+            name === "strategy-confirmation"
+        );
 
         if (!settings) return;
 
@@ -131,6 +176,23 @@ document.querySelectorAll(".time-btn").forEach(button => {
                 "hidden",
                 WhaleRadar.selectedPeriod !== "custom"
             );
+
+    });
+
+});
+
+
+/* اختيار اتجاه الصفقة */
+
+document.querySelectorAll(".direction-btn").forEach(button => {
+
+    button.addEventListener("click", () => {
+
+        document.querySelectorAll(".direction-btn").forEach(item => {
+            item.classList.remove("active");
+        });
+
+        button.classList.add("active");
 
     });
 
