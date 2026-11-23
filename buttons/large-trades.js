@@ -1,11 +1,11 @@
 
 /**
  * WHALE RADAR
- * LARGE TRADES DETECTOR
- * الإصدار المتصل بمحرك البيانات المركزي
+ * LARGE TRADES VISUAL DASHBOARD
  */
 
 import { fetchMarketData } from "../core/market-data.js";
+import { renderDashboard } from "../core/results-ui.js";
 
 export async function run(settings) {
 
@@ -13,25 +13,21 @@ export async function run(settings) {
 
     results.innerHTML = `
         <div class="result-card">
-            <h3>🐋 رادار الصفقات الضخمة</h3>
-            <p>جارٍ جلب جميع صفقات الفترة المحددة وتحليلها...</p>
+            <h3>🐋 تحليل الصفقات الضخمة</h3>
+            <p>جارٍ تحليل بيانات السوق...</p>
         </div>
     `;
 
     try {
 
-        // جلب البيانات الكاملة من المحرك المركزي
         const market = await fetchMarketData(settings);
-
         const trades = market.trades;
 
         if (!trades.length) {
             throw new Error("لا توجد صفقات ضمن الفترة المحددة");
         }
 
-        // حساب متوسط قيمة التنفيذ
         const values = trades.map(t => t.value);
-
         const sortedValues = [...values].sort((a, b) => a - b);
 
         const percentile = p =>
@@ -43,39 +39,32 @@ export async function run(settings) {
             values.reduce((sum, value) => sum + value, 0)
             / values.length;
 
-        const median = percentile(0.50);
-        const p95 = percentile(0.95);
-
-        // حد الرصد التكيفي
         const threshold = Math.max(
-            p95,
+            percentile(0.95),
             average * 5
         );
 
         const largeTrades = trades
-            .filter(trade => trade.value >= threshold)
+            .filter(t => t.value >= threshold)
             .sort((a, b) => b.value - a.value);
 
-        const totalLargeValue = largeTrades.reduce(
-            (sum, trade) => sum + trade.value,
-            0
-        );
-
         const buyTrades = largeTrades.filter(
-            trade => !trade.buyerIsMaker
+            t => !t.buyerIsMaker
         );
 
         const sellTrades = largeTrades.filter(
-            trade => trade.buyerIsMaker
+            t => t.buyerIsMaker
         );
 
         const buyValue = buyTrades.reduce(
-            (sum, trade) => sum + trade.value, 0
+            (sum, t) => sum + t.value, 0
         );
 
         const sellValue = sellTrades.reduce(
-            (sum, trade) => sum + trade.value, 0
+            (sum, t) => sum + t.value, 0
         );
+
+        const totalValue = buyValue + sellValue;
 
         const formatMoney = value =>
             "$" + value.toLocaleString("en-US", {
@@ -90,105 +79,129 @@ export async function run(settings) {
         const formatTime = timestamp =>
             new Date(timestamp).toLocaleString("ar");
 
-        const rows = largeTrades.slice(0, 50).map(trade => {
+        const rows = largeTrades.slice(0, 50).map(
+            (trade, index) => [
 
-            const isBuy = !trade.buyerIsMaker;
+                `#${index + 1}`,
 
-            return `
-                <div class="trade-row">
+                formatMoney(trade.value),
 
-                    <div>
-                        <strong>${formatMoney(trade.value)}</strong>
-                        <small>${formatTime(trade.time)}</small>
-                    </div>
+                formatNumber(trade.price),
 
-                    <div>
-                        <strong>${formatNumber(trade.price)}</strong>
-                        <small>${formatNumber(trade.quantity)} وحدة</small>
-                    </div>
+                formatNumber(trade.quantity),
 
-                    <div class="${isBuy ? "buy" : "sell"}">
-                        ${isBuy ? "شراء مبادر" : "بيع مبادر"}
-                    </div>
+                trade.buyerIsMaker
+                    ? "بيع مبادر"
+                    : "شراء مبادر",
 
-                </div>
-            `;
+                formatTime(trade.time)
 
-        }).join("");
+            ]
+        );
 
-        results.innerHTML = `
+        const buyPercent = totalValue > 0
+            ? buyValue / totalValue * 100
+            : 0;
 
-            <div class="result-card">
+        const sellPercent = totalValue > 0
+            ? sellValue / totalValue * 100
+            : 0;
 
-                <h3>🐋 تحليل الصفقات الضخمة</h3>
+        renderDashboard({
 
-                <div class="trade-summary">
+            title: "🐋 رادار الصفقات الضخمة",
 
-                    <div>
-                        <small>العملة</small>
-                        <strong>${market.symbol}</strong>
-                    </div>
+            symbol: market.symbol,
 
-                    <div>
-                        <small>إجمالي الصفقات</small>
-                        <strong>${market.totalTrades.toLocaleString()}</strong>
-                    </div>
+            subtitle: "تحليل التنفيذات الكبيرة",
 
-                    <div>
-                        <small>دفعات البيانات</small>
-                        <strong>${market.pages}</strong>
-                    </div>
+            metrics: [
 
-                    <div>
-                        <small>الصفقات الضخمة</small>
-                        <strong>${largeTrades.length}</strong>
-                    </div>
+                {
+                    label: "إجمالي الصفقات المحللة",
+                    value: market.totalTrades.toLocaleString(),
+                    tone: "blue",
+                    detail: `${market.pages} دفعات بيانات`
+                },
 
-                </div>
+                {
+                    label: "الصفقات الضخمة",
+                    value: largeTrades.length.toLocaleString(),
+                    tone: "gold"
+                },
 
-                <h4>ملخص رأس المال الكبير</h4>
+                {
+                    label: "قيمة الشراء المبادر",
+                    value: formatMoney(buyValue),
+                    tone: "buy"
+                },
 
-                <div class="trade-summary">
-
-                    <div>
-                        <small>قيمة الصفقات الضخمة</small>
-                        <strong>${formatMoney(totalLargeValue)}</strong>
-                    </div>
-
-                    <div>
-                        <small>قيمة الشراء المبادر</small>
-                        <strong class="buy">${formatMoney(buyValue)}</strong>
-                    </div>
-
-                    <div>
-                        <small>قيمة البيع المبادر</small>
-                        <strong class="sell">${formatMoney(sellValue)}</strong>
-                    </div>
-
-                    <div>
-                        <small>حد رصد الصفقة</small>
-                        <strong>${formatMoney(threshold)}</strong>
-                    </div>
-
-                </div>
-
-                <h4>أكبر الصفقات المنفذة</h4>
-
-                ${
-                    rows ||
-                    "<p>لم يتم العثور على صفقات تتجاوز حد الرصد.</p>"
+                {
+                    label: "قيمة البيع المبادر",
+                    value: formatMoney(sellValue),
+                    tone: "sell"
                 }
 
-                <p class="analysis-note">
-                    تم تحليل ${market.totalTrades.toLocaleString()}
-                    صفقة ضمن الفترة المطلوبة، عبر ${market.pages} دفعة.
-                    حد الرصد تكيفي ويعتمد على توزيع أحجام التنفيذ.
-                    اتجاه المبادرة لا يكشف هوية صاحب الصفقة.
-                </p>
+            ],
 
-            </div>
+            sections: [
 
-        `;
+                {
+                    type: "bars",
+                    title: "ميزان رأس المال الكبير",
+                    description: "توزيع قيمة الصفقات التي تجاوزت حد الرصد",
+
+                    items: [
+
+                        {
+                            label: "الشراء المبادر",
+                            value: buyValue,
+                            display: `${formatMoney(buyValue)} — ${buyPercent.toFixed(1)}%`,
+                            tone: "buy"
+                        },
+
+                        {
+                            label: "البيع المبادر",
+                            value: sellValue,
+                            display: `${formatMoney(sellValue)} — ${sellPercent.toFixed(1)}%`,
+                            tone: "sell"
+                        }
+
+                    ]
+                },
+
+                {
+                    type: "table",
+                    title: "أكبر 50 صفقة منفذة",
+                    description: `حد رصد الصفقة: ${formatMoney(threshold)}`,
+
+                    columns: [
+                        "الترتيب",
+                        "القيمة",
+                        "السعر",
+                        "الكمية",
+                        "المبادرة",
+                        "الوقت"
+                    ],
+
+                    rows
+                },
+
+                {
+                    type: "note",
+                    title: "قراءة الرادار",
+
+                    text:
+                        `تم تحليل ${market.totalTrades.toLocaleString()} صفقة. ` +
+                        `تم رصد ${largeTrades.length} صفقة تجاوزت الحد التكيفي. ` +
+                        `نسبة الشراء المبادر ${buyPercent.toFixed(2)}% ` +
+                        `ونسبة البيع المبادر ${sellPercent.toFixed(2)}%. ` +
+                        `اتجاه المبادرة لا يكشف هوية صاحب التنفيذ أو حسابه.`
+                }
+
+            ]
+
+        });
 
     } catch (error) {
 
