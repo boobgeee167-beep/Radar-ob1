@@ -109,6 +109,84 @@
         </section>
 
 
+        <!-- إعدادات الاستراتيجية -->
+        <section class="settings-section">
+
+            <h2>🎯 منطقة الاستراتيجية</h2>
+
+            <p>
+                حدد منطقة الـ Order Block التي اكتشفتها،
+                ليقوم الرادار بتحليل الأدلة المرتبطة بها.
+            </p>
+
+            <div class="form-group">
+
+                <label>اتجاه الصفقة</label>
+
+                <div class="time-options">
+
+                    <button
+                        type="button"
+                        class="direction-btn active"
+                        data-direction="long"
+                    >
+                        🟢 شراء (Long)
+                    </button>
+
+                    <button
+                        type="button"
+                        class="direction-btn"
+                        data-direction="short"
+                    >
+                        🔴 بيع (Short)
+                    </button>
+
+                </div>
+
+            </div>
+
+
+            <div class="form-group">
+
+                <label for="ob-upper">
+                    الحد الأعلى لمنطقة Order Block
+                </label>
+
+                <input
+                    type="number"
+                    id="ob-upper"
+                    placeholder="مثال: 0.8500"
+                    step="any"
+                    inputmode="decimal"
+                >
+
+            </div>
+
+
+            <div class="form-group">
+
+                <label for="ob-lower">
+                    الحد الأدنى لمنطقة Order Block
+                </label>
+
+                <input
+                    type="number"
+                    id="ob-lower"
+                    placeholder="مثال: 0.8200"
+                    step="any"
+                    inputmode="decimal"
+                >
+
+            </div>
+
+            <p>
+                هذه المدخلات مخصصة للمحلل الاستراتيجي،
+                ولن تؤثر حالياً على أدوات الفحص الستة.
+            </p>
+
+        </section>
+
+
         <!-- أدوات الرادار -->
         <section class="radar-section">
 
@@ -169,6 +247,22 @@
         </footer>
 
     </main>
+
+
+    <!-- اختيار اتجاه الاستراتيجية -->
+    <script>
+        document.querySelectorAll(".direction-btn").forEach(button => {
+            button.addEventListener("click", () => {
+
+                document.querySelectorAll(".direction-btn").forEach(item => {
+                    item.classList.remove("active");
+                });
+
+                button.classList.add("active");
+
+            });
+        });
+    </script>
 
 
     <!-- مشغل التطبيق -->
