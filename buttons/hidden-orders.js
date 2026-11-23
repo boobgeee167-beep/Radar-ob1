@@ -1,16 +1,11 @@
 
 /**
  * WHALE RADAR
- * HIDDEN ORDERS PATTERN DETECTOR
- *
- * رصد أنماط التنفيذ التي قد تشير إلى:
- * - Iceberg محتمل
- * - تجزئة الأوامر الكبيرة
- * - امتصاص ضغط البيع أو الشراء
- * - تكرار التنفيذ عند مستوى سعري واحد
- *
- * لا يدّعي إثبات وجود أوامر مخفية.
+ * HIDDEN ORDERS DETECTOR
+ * Central Data Engine Edition
  */
+
+import { fetchMarketData } from "../core/market-data.js";
 
 export async function run(settings) {
 
@@ -18,185 +13,117 @@ export async function run(settings) {
 
     results.innerHTML = `
         <div class="result-card">
-            <h3>🔬 كاشف الأنماط المخفية</h3>
-            <p>جارٍ تحليل بصمات التنفيذ ودفتر الأوامر...</p>
+            <h3>🕵️ رادار الأوامر المخفية</h3>
+            <p>جارٍ تحليل التنفيذات وفحص دفتر الأوامر...</p>
         </div>
     `;
 
     try {
 
-        const symbol = settings.symbol;
-
-        if (!/^[A-Z0-9]{2,30}USDT$/.test(symbol)) {
-            throw new Error("رمز العملة غير صالح");
-        }
-
-        // جلب الصفقات المجمعة
-        const tradesURL = new URL(
-            "https://data-api.binance.vision/api/v3/aggTrades"
-        );
-
-        tradesURL.searchParams.set("symbol", symbol);
-        tradesURL.searchParams.set("limit", "1000");
-
-        // جلب دفتر الأوامر الحالي
-        const depthURL = new URL(
-            "https://data-api.binance.vision/api/v3/depth"
-        );
-
-        depthURL.searchParams.set("symbol", symbol);
-        depthURL.searchParams.set("limit", "1000");
-
-        const [tradesResponse, depthResponse] = await Promise.all([
-            fetch(tradesURL),
-            fetch(depthURL)
-        ]);
-
-        if (!tradesResponse.ok || !depthResponse.ok) {
-            throw new Error("تعذر جلب بيانات Binance");
-        }
-
-        const [rawTrades, depth] = await Promise.all([
-            tradesResponse.json(),
-            depthResponse.json()
-        ]);
-
-        if (!Array.isArray(rawTrades) || !rawTrades.length) {
-            throw new Error("لا توجد صفقات متاحة للتحليل");
-        }
-
-        if (!Array.isArray(depth.bids) || !Array.isArray(depth.asks)) {
-            throw new Error("بيانات دفتر الأوامر غير مكتملة");
-        }
-
-        // مراعاة الفترة الزمنية المخصصة إن وجدت
-        let trades = rawTrades;
-
-        if (
-            settings.period === "custom" &&
-            settings.startTime &&
-            settings.endTime
-        ) {
-            trades = trades.filter(trade =>
-                Number(trade.T) >= settings.startTime &&
-                Number(trade.T) <= settings.endTime
-            );
-        }
+        const market = await fetchMarketData(settings);
+        const trades = market.trades;
 
         if (!trades.length) {
-            throw new Error("لا توجد صفقات ضمن الفترة المحددة في العينة");
+            throw new Error("لا توجد صفقات ضمن الفترة المحددة");
         }
 
-        const analyzed = trades.map(trade => ({
-            price: Number(trade.p),
-            quantity: Number(trade.q),
-            value: Number(trade.p) * Number(trade.q),
-            time: Number(trade.T),
-            buyerIsMaker: trade.m
-        }));
-
-        const totalVolume = analyzed.reduce(
-            (sum, trade) => sum + trade.quantity, 0
-        );
-
-        const totalValue = analyzed.reduce(
-            (sum, trade) => sum + trade.value, 0
-        );
-
         // تجميع التنفيذات حسب السعر
-        const levels = new Map();
+        const priceGroups = new Map();
 
-        for (const trade of analyzed) {
+        for (const trade of trades) {
 
-            const key = trade.price.toString();
+            const key = trade.price;
 
-            if (!levels.has(key)) {
-                levels.set(key, {
+            if (!priceGroups.has(key)) {
+                priceGroups.set(key, {
                     price: trade.price,
                     count: 0,
-                    quantity: 0,
-                    value: 0,
-                    buyInitiated: 0,
-                    sellInitiated: 0,
-                    firstTime: trade.time,
-                    lastTime: trade.time
+                    buyValue: 0,
+                    sellValue: 0,
+                    totalValue: 0,
+                    quantity: 0
                 });
             }
 
-            const level = levels.get(key);
+            const group = priceGroups.get(key);
 
-            level.count++;
-            level.quantity += trade.quantity;
-            level.value += trade.value;
+            group.count++;
+            group.totalValue += trade.value;
+            group.quantity += trade.quantity;
 
             if (trade.buyerIsMaker) {
-                level.sellInitiated += trade.quantity;
+                group.sellValue += trade.value;
             } else {
-                level.buyInitiated += trade.quantity;
+                group.buyValue += trade.value;
             }
 
-            level.firstTime = Math.min(level.firstTime, trade.time);
-            level.lastTime = Math.max(level.lastTime, trade.time);
         }
 
-        const groupedLevels = [...levels.values()];
+        const repeatedPrices = [...priceGroups.values()]
+            .filter(group => group.count >= 5)
+            .sort((a, b) => b.count - a.count);
 
-        // متوسط قيمة التنفيذ
-        const averageValue = totalValue / analyzed.length;
-
-        // مستويات تكرار التنفيذ
-        const repeatedLevels = groupedLevels
-            .filter(level => level.count >= 4)
+        // أعلى التنفيذات قيمة
+        const sortedTrades = [...trades]
             .sort((a, b) => b.value - a.value);
 
-        // مستويات ذات تنفيذ مرتفع مقارنة بالعينة
-        const heavyLevels = groupedLevels
-            .filter(level =>
-                level.value >= averageValue * 5 &&
-                level.count >= 2
-            )
-            .sort((a, b) => b.value - a.value);
+        const largeTrades = sortedTrades.slice(
+            0,
+            Math.max(1, Math.ceil(trades.length * 0.01))
+        );
 
-        // تحليل دفتر الأوامر الحالي
-        const bids = depth.bids.map(item => ({
-            price: Number(item[0]),
-            quantity: Number(item[1]),
-            value: Number(item[0]) * Number(item[1])
-        }));
+        const largeValue = largeTrades.reduce(
+            (sum, trade) => sum + trade.value,
+            0
+        );
 
-        const asks = depth.asks.map(item => ({
-            price: Number(item[0]),
-            quantity: Number(item[1]),
-            value: Number(item[0]) * Number(item[1])
-        }));
+        // فحص دفتر الأوامر الحالي
+        let depthData = null;
+        let depthError = null;
 
-        const findBookLevel = (price, side) => {
+        try {
 
-            const list = side === "bid" ? bids : asks;
+            const url = new URL(
+                "https://data-api.binance.vision/api/v3/depth"
+            );
 
-            return list.find(item => item.price === price) || null;
+            url.searchParams.set("symbol", market.symbol);
+            url.searchParams.set("limit", "100");
 
-        };
+            const response = await fetch(url);
 
-        // مقارنة التنفيذات مع السيولة الظاهرة حالياً
-        const bookComparisons = heavyLevels.map(level => {
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
 
-            const bid = findBookLevel(level.price, "bid");
-            const ask = findBookLevel(level.price, "ask");
+            depthData = await response.json();
 
-            const displayed = bid || ask;
+        } catch (error) {
+            depthError = error.message;
+        }
 
-            return {
-                ...level,
-                displayedQuantity: displayed
-                    ? displayed.quantity
-                    : null,
-                displayedValue: displayed
-                    ? displayed.value
-                    : null
-            };
+        // تحليل جدار الأوامر
+        let bidWalls = [];
+        let askWalls = [];
 
-        });
+        if (depthData) {
+
+            bidWalls = depthData.bids.map(level => ({
+                price: Number(level[0]),
+                quantity: Number(level[1]),
+                value: Number(level[0]) * Number(level[1])
+            }));
+
+            askWalls = depthData.asks.map(level => ({
+                price: Number(level[0]),
+                quantity: Number(level[1]),
+                value: Number(level[0]) * Number(level[1])
+            }));
+
+            bidWalls.sort((a, b) => b.value - a.value);
+            askWalls.sort((a, b) => b.value - a.value);
+
+        }
 
         const formatMoney = value =>
             "$" + value.toLocaleString("en-US", {
@@ -208,167 +135,111 @@ export async function run(settings) {
                 maximumFractionDigits: 8
             });
 
-        const formatTime = timestamp =>
-            new Date(timestamp).toLocaleString("ar");
+        const priceRows = repeatedPrices
+            .slice(0, 20)
+            .map(group => `
+                <div class="trade-row">
 
-        // بناء تقرير مستويات التكرار
-        const repeatedHTML = repeatedLevels
-            .slice(0, 15)
-            .map(level => {
-
-                const duration =
-                    (level.lastTime - level.firstTime) / 1000;
-
-                return `
-                    <div class="trade-row">
-                        <div>
-                            <strong>${formatNumber(level.price)}</strong>
-                            <small>${level.count} تنفيذات مجمعة</small>
-                        </div>
-
-                        <div>
-                            <strong>${formatMoney(level.value)}</strong>
-                            <small>${formatNumber(level.quantity)} كمية</small>
-                        </div>
-
-                        <div>
-                            <small>الفاصل الزمني</small>
-                            <strong>${duration.toFixed(1)} ثانية</strong>
-                        </div>
+                    <div>
+                        <strong>${formatNumber(group.price)}</strong>
+                        <small>${group.count} تنفيذات عند السعر نفسه</small>
                     </div>
-                `;
 
-            }).join("");
-
-        // بناء تقرير مستويات التنفيذ المرتفع
-        const heavyHTML = bookComparisons
-            .slice(0, 15)
-            .map(level => {
-
-                const side = level.buyInitiated >= level.sellInitiated
-                    ? "شراء مبادر"
-                    : "بيع مبادر";
-
-                return `
-                    <div class="trade-row">
-                        <div>
-                            <strong>${formatNumber(level.price)}</strong>
-                            <small>${side}</small>
-                        </div>
-
-                        <div>
-                            <strong>${formatMoney(level.value)}</strong>
-                            <small>${level.count} تنفيذات مجمعة</small>
-                        </div>
-
-                        <div>
-                            <small>السيولة الظاهرة الآن</small>
-                            <strong>
-                                ${
-                                    level.displayedValue === null
-                                    ? "غير موجودة حالياً"
-                                    : formatMoney(level.displayedValue)
-                                }
-                            </strong>
-                        </div>
+                    <div>
+                        <strong>${formatMoney(group.totalValue)}</strong>
+                        <small>إجمالي القيمة</small>
                     </div>
-                `;
 
-            }).join("");
+                    <div>
+                        <strong class="buy">${formatMoney(group.buyValue)}</strong>
+                        <small class="sell">${formatMoney(group.sellValue)}</small>
+                    </div>
 
-        // حساب ضغط المبادرة
-        const buyInitiated = analyzed
-            .filter(trade => !trade.buyerIsMaker)
-            .reduce((sum, trade) => sum + trade.value, 0);
+                </div>
+            `).join("");
 
-        const sellInitiated = analyzed
-            .filter(trade => trade.buyerIsMaker)
-            .reduce((sum, trade) => sum + trade.value, 0);
+        const wallRows = (walls, type) =>
+            walls.slice(0, 5).map(wall => `
+                <div class="trade-row">
 
-        const buyRatio = totalValue
-            ? buyInitiated / totalValue * 100
-            : 0;
+                    <div>
+                        <strong>${formatNumber(wall.price)}</strong>
+                    </div>
 
-        const sellRatio = totalValue
-            ? sellInitiated / totalValue * 100
-            : 0;
+                    <div>
+                        <strong>${formatMoney(wall.value)}</strong>
+                        <small>${formatNumber(wall.quantity)} وحدة</small>
+                    </div>
+
+                    <div class="${type}">
+                        ${type === "buy" ? "طلب شراء" : "طلب بيع"}
+                    </div>
+
+                </div>
+            `).join("");
 
         results.innerHTML = `
 
             <div class="result-card">
 
-                <h3>🔬 تحليل أنماط الأوامر المخفية</h3>
+                <h3>🕵️ تحليل أنماط الأوامر المخفية</h3>
 
                 <div class="trade-summary">
 
                     <div>
                         <small>العملة</small>
-                        <strong>${symbol}</strong>
+                        <strong>${market.symbol}</strong>
                     </div>
 
                     <div>
-                        <small>التنفيذات المحللة</small>
-                        <strong>${analyzed.length}</strong>
+                        <small>الصفقات المحللة</small>
+                        <strong>${market.totalTrades.toLocaleString()}</strong>
                     </div>
 
                     <div>
-                        <small>مستويات التكرار</small>
-                        <strong>${repeatedLevels.length}</strong>
+                        <small>مستويات الأسعار المتكررة</small>
+                        <strong>${repeatedPrices.length}</strong>
                     </div>
 
                     <div>
-                        <small>مستويات التنفيذ المرتفع</small>
-                        <strong>${heavyLevels.length}</strong>
+                        <small>قيمة أعلى 1%</small>
+                        <strong>${formatMoney(largeValue)}</strong>
                     </div>
 
                 </div>
 
-                <h4>1. مستويات تكرار التنفيذ</h4>
+                <h4>📍 تكرار التنفيذ عند مستويات سعرية</h4>
 
                 ${
-                    repeatedHTML ||
-                    "<p>لم تظهر مستويات تحقق شروط التكرار.</p>"
+                    priceRows ||
+                    "<p>لم تظهر مستويات تكرار تستوفي شروط الرصد.</p>"
                 }
 
-                <h4>2. التنفيذات المرتفعة والسيولة الظاهرة</h4>
+                <h4>📗 أكبر جدران الشراء الحالية</h4>
 
                 ${
-                    heavyHTML ||
-                    "<p>لم تظهر مستويات تحقق شروط التنفيذ المرتفع.</p>"
+                    depthData
+                        ? wallRows(bidWalls, "buy") ||
+                          "<p>لا توجد بيانات شراء.</p>"
+                        : "<p>تعذر جلب دفتر الأوامر.</p>"
                 }
 
-                <h4>3. ضغط المبادرة</h4>
+                <h4>📕 أكبر جدران البيع الحالية</h4>
 
-                <div class="trade-summary">
-
-                    <div>
-                        <small>شراء مبادر</small>
-                        <strong>${buyRatio.toFixed(2)}%</strong>
-                    </div>
-
-                    <div>
-                        <small>بيع مبادر</small>
-                        <strong>${sellRatio.toFixed(2)}%</strong>
-                    </div>
-
-                </div>
-
-                <h4>4. قراءة الرادار</h4>
-
-                <p>
-                    ${
-                        repeatedLevels.length
-                        ? "ظهرت مستويات سعرية تكرر عندها التنفيذ. تستحق هذه المستويات مراقبة إضافية."
-                        : "لم تظهر مستويات تكرار واضحة في العينة."
-                    }
-                </p>
+                ${
+                    depthData
+                        ? wallRows(askWalls, "sell") ||
+                          "<p>لا توجد بيانات بيع.</p>"
+                        : "<p>تعذر جلب دفتر الأوامر.</p>"
+                }
 
                 <p class="analysis-note">
-                    تنبيه: تكرار التنفيذ عند سعر واحد لا يثبت وجود
-                    Iceberg أو أمر مخفي. كما أن دفتر الأوامر يمثل
-                    لقطة حالية، ولا يثبت تجدد السيولة تاريخياً.
-                    بيانات Binance العامة لا تكشف هوية أصحاب الأوامر.
-                    هذه النتائج مؤشرات أولية وليست إثباتاً.
+                    تم تحليل ${market.totalTrades.toLocaleString()}
+                    صفقة من ${market.pages} دفعات.
+                    تكرار التنفيذ عند سعر واحد قد يشير إلى نشاط تنفيذ منظم،
+                    لكنه لا يثبت وجود أمر Iceberg أو هوية جهة واحدة.
+                    دفتر الأوامر يعرض لقطة حالية وليس تاريخاً للأوامر.
+                    ${depthError ? "تعذر فحص دفتر الأوامر: " + depthError : ""}
                 </p>
 
             </div>
@@ -387,4 +258,3 @@ export async function run(settings) {
     }
 
 }
-  
