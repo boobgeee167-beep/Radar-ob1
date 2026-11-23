@@ -1248,4 +1248,255 @@ function evaluateStrategy(
     };
 }
 
-/*
+/* =====================================================
+   بناء الأدلة
+===================================================== */
+
+function interpretFootprint(layer, label) {
+    const large = layer.largeTrades;
+    const capital = layer.capital;
+    const clusters = layer.clusters;
+
+    return [
+        {
+            name: `${label}: الصفقات الكبيرة`,
+            status: large.status,
+            text:
+                `عدد التنفيذات الكبيرة ${large.count}، ` +
+                `بقيمة ${formatMoney(large.totalValue)}. ` +
+                `قيمة الشراء ${formatMoney(large.buyValue)}، ` +
+                `وقيمة البيع ${formatMoney(large.sellValue)}.`
+        },
+        {
+            name: `${label}: بصمة رأس المال`,
+            status: capital.status,
+            text:
+                `عدد تنفيذات الشريحة العليا ${capital.count}، ` +
+                `بقيمة ${formatMoney(capital.totalValue)}.`
+        },
+        {
+            name: `${label}: عناقيد التنفيذ`,
+            status: clusters.status,
+            text:
+                `عدد العناقيد ${clusters.count}، ` +
+                `${clusters.buyCount} مائلة للشراء و${clusters.sellCount} مائلة للبيع.`
+        },
+        {
+            name: `${label}: استجابة السعر`,
+            status: layer.priceResponse.meaningfulWindows
+                ? "observed"
+                : "unclear",
+            text: layer.priceResponse.summary
+        }
+    ];
+}
+
+function buildEvidence(
+    globalLayer,
+    approachLayer,
+    zoneLayer,
+    footprint
+) {
+    return {
+        global: globalLayer,
+        approach: approachLayer,
+        zone: zoneLayer,
+
+        largeTrades: globalLayer.largeTrades,
+        clusters: globalLayer.clusters,
+        capital: globalLayer.capital,
+        activity: globalLayer.activity,
+
+        institutionalFootprint: footprint,
+
+        historicalInteraction: {
+            global: globalLayer.priceResponse,
+            approach: approachLayer.priceResponse,
+            zone: zoneLayer.priceResponse
+        },
+
+        findings: [
+            ...interpretFootprint(globalLayer, "الفترة كاملة"),
+            ...interpretFootprint(approachLayer, "ممر الوصول"),
+            ...interpretFootprint(zoneLayer, "داخل المنطقة"),
+            {
+                name: "القراءة المؤسسية",
+                status: footprint.status,
+                text: footprint.summary
+            }
+        ]
+    };
+}
+
+/* =====================================================
+   المحلل الرئيسي
+===================================================== */
+
+export async function analyzeStrategy(settings) {
+    if (!settings?.strategy) {
+        throw new Error("إعدادات منطقة الدخول غير موجودة");
+    }
+
+    const upper = Number(settings.strategy.upper);
+    const lower = Number(settings.strategy.lower);
+
+    const direction = String(
+        settings.strategy.direction || "long"
+    ).toLowerCase();
+
+    if (
+        !Number.isFinite(upper) ||
+        !Number.isFinite(lower) ||
+        upper <= 0 ||
+        lower <= 0 ||
+        upper < lower
+    ) {
+        throw new Error("حدود منطقة الدخول غير صحيحة");
+    }
+
+    if (!["long", "short"].includes(direction)) {
+        throw new Error("اتجاه الصفقة يجب أن يكون LONG أو SHORT");
+    }
+
+    const market = await fetchMarketData(settings);
+    const trades = validateTrades(market?.trades || []);
+
+    if (!trades.length) {
+        throw new Error("لم يتم العثور على تداولات صالحة في الفترة المحددة");
+    }
+
+    const referencePrice = getReferencePrice(trades);
+
+    /*
+     * العتبات تحسب من كامل الفترة،
+     * ثم تطبق على الطبقات الثلاث.
+     */
+
+    const thresholds = {
+        large: getLargeTradeThreshold(trades),
+        capital: getCapitalThreshold(trades)
+    };
+
+    const position = analyzeZonePosition(
+        referencePrice,
+        upper,
+        lower
+    );
+
+    const approachTrades = getApproachTrades(
+        trades,
+        referencePrice,
+        upper,
+        lower
+    );
+
+    const zoneTrades = trades.filter(trade =>
+        insideZone(trade, upper, lower)
+    );
+
+    const globalLayer = analyzeLayer(trades, thresholds);
+    const approachLayer = analyzeLayer(approachTrades, thresholds);
+    const zoneLayer = analyzeLayer(zoneTrades, thresholds);
+
+    const scenario = analyzeScenarioPath(
+        direction,
+        position,
+        approachLayer,
+        zoneLayer
+    );
+
+    const zoneEvaluation = evaluateZoneEvidence(
+        direction,
+        zoneLayer
+    );
+
+    /*
+     * الأولوية للبصمة داخل المنطقة،
+     * ثم ممر الوصول، ثم الفترة العامة.
+     */
+
+    const footprintLayer =
+        zoneLayer.range.count >= CONFIG.MIN_ZONE_TRADES
+            ? zoneLayer
+            : approachLayer.range.count >= CONFIG.MIN_ZONE_TRADES
+                ? approachLayer
+                : globalLayer;
+
+    const footprint = analyzeInstitutionalFootprint(
+        footprintLayer,
+        direction
+    );
+
+    const evaluation = evaluateStrategy(
+        direction,
+        position,
+        scenario,
+        globalLayer,
+        approachLayer,
+        zoneLayer,
+        zoneEvaluation,
+        footprint
+    );
+
+    const evidence = buildEvidence(
+        globalLayer,
+        approachLayer,
+        zoneLayer,
+        footprint
+    );
+
+    const limitations = [
+        "بيانات Binance العامة لا تكشف هوية المتداول أو تثبت أن التنفيذات تعود إلى صندوق أو حوت بعينه.",
+        "البصمة الكبيرة تعني نشاط تنفيذات مرتفعة القيمة، ولا تثبت نية الدخول مستقبلاً.",
+        "لا يمكن إثبات أن عدة تنفيذات تعود إلى حساب واحد من بيانات aggTrades.",
+        "عناقيد التنفيذ تقيس كثافة التنفيذات زمنياً، ولا تثبت وحدها وجود خوارزمية مؤسسية.",
+        "تباين المبادرة مع استجابة السعر قرينة محتملة على وجود طرف مقابل، وليس إثباتاً قاطعاً للامتصاص.",
+        "الصفقات الكبيرة وبصمة رأس المال والعناقيد مشتقة من مجموعة التداولات نفسها، وليست مصادر مستقلة إحصائياً.",
+        "النوافذ الزمنية الفارغة لا تعامل كنوافذ متجاورة.",
+        "السعر المرجعي هو آخر تنفيذ تاريخي مسترجع، وليس سعراً لحظياً مستقلاً.",
+        "اكتمال جلب الصفحات لا يثبت توفر كل التاريخ الممكن للفترة."
+    ];
+
+    const dataQuality = {
+        tradeCount: trades.length,
+        globalWindowCount: globalLayer.priceResponse.totalWindows,
+        approachTradeCount: approachTrades.length,
+        zoneTradeCount: zoneTrades.length,
+        referencePrice,
+        firstTradeTime: trades[0].time,
+        lastTradeTime: trades[trades.length - 1].time,
+        fetchComplete: market?.complete === true,
+        fetchPages: market?.pages ?? null,
+        fetchTotalTrades: market?.totalTrades ?? trades.length
+    };
+
+    return {
+        market,
+
+        strategy: {
+            upper,
+            lower,
+            direction,
+            symbol: market.symbol || settings.symbol
+        },
+
+        referencePrice,
+        position,
+        scenario,
+
+        evaluation,
+        evidence,
+        dataQuality,
+        limitations,
+
+        summary: {
+            verdict: evaluation.verdict,
+            title: evaluation.title,
+            explanation: evaluation.explanation,
+            institutionalStatus: footprint.status,
+            institutionalTitle: footprint.title,
+            institutionalSummary: footprint.summary
+        }
+    };
+}
+
