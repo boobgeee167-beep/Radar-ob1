@@ -3,16 +3,18 @@
  * WHALE RADAR
  * STRATEGY INTELLIGENCE ENGINE
  *
- * المحلل الاستراتيجي لمنطقة Order Block.
+ * محرك تقييم توافق سلوك السوق مع سيناريو Order Block.
  *
  * السعر المرجعي = آخر تنفيذ في الفترة المختارة.
- * لا يستخدم السعر اللحظي من Binance.
+ * لا يستخدم السعر اللحظي.
  *
  * مصادر الأدلة:
  * 1. Large Trades
  * 2. Execution Clusters
  * 3. Capital Footprint
  * 4. Buy / Sell Activity
+ *
+ * المحلل مستشار فقط ولا يمنع الدخول.
  */
 
 import { fetchMarketData } from "./market-data.js";
@@ -23,22 +25,30 @@ import { fetchMarketData } from "./market-data.js";
 ===================================== */
 
 const CONFIG = {
-    LARGE_TRADE_MIN_COUNT: 20,
     CLUSTER_WINDOW_MS: 60 * 1000,
     ACTIVITY_WINDOW_MS: 60 * 1000,
     CAPITAL_PERCENTILE: 0.90,
     PRICE_BUCKETS: 20,
 
-    // مسافة الاقتراب بوحدات عرض المنطقة
     APPROACH_DISTANCE: 1,
+    BOUNDARY_TOLERANCE: 0.02,
 
-    // هامش اعتبار السعر ملامساً للحد
-    BOUNDARY_TOLERANCE: 0.02
+    // الحد الأدنى لتحليل تدفق التنفيذات داخل المنطقة
+    MIN_ZONE_TRADES: 10,
+
+    // الحد الأدنى لقبول مصدر كدليل
+    MIN_LARGE_TRADES: 3,
+    MIN_CLUSTER_WINDOWS: 2,
+    MIN_CAPITAL_TRADES: 3,
+    MIN_ACTIVITY_WINDOWS: 2,
+
+    // الحد الأدنى للفارق بين المبادرة المؤيدة والمعارضة
+    DIRECTIONAL_THRESHOLD: 0.15
 };
 
 
 /* =====================================
-   HELPERS
+   BASIC HELPERS
 ===================================== */
 
 function sum(values) {
@@ -74,7 +84,6 @@ function percentile(values, ratio) {
 }
 
 function getSide(trade) {
-    // buyerIsMaker = true يعني أن البائع هو المبادر
     return trade.buyerIsMaker ? "sell" : "buy";
 }
 
@@ -88,14 +97,43 @@ function getValue(trade) {
         : trade.price * trade.quantity;
 }
 
-function getSettingsValue(settings, names) {
-    for (const name of names) {
-        if (settings[name] !== undefined && settings[name] !== null) {
-            return settings[name];
-        }
-    }
+function formatDirection(direction) {
+    return direction === "long" ? "الشراء LONG" : "البيع SHORT";
+}
 
-    return undefined;
+function alignedSide(direction) {
+    return direction === "long" ? "buy" : "sell";
+}
+
+function opposingSide(direction) {
+    return direction === "long" ? "sell" : "buy";
+}
+
+function safeRatio(numerator, denominator) {
+    return denominator > 0 ? numerator / denominator : 0;
+}
+
+function getFlow(trades) {
+    const buyValue = sum(
+        trades.filter(t => getSide(t) === "buy").map(t => t.value)
+    );
+
+    const sellValue = sum(
+        trades.filter(t => getSide(t) === "sell").map(t => t.value)
+    );
+
+    const totalValue = buyValue + sellValue;
+
+    return {
+        buyValue,
+        sellValue,
+        totalValue,
+        buyCount: trades.filter(t => getSide(t) === "buy").length,
+        sellCount: trades.filter(t => getSide(t) === "sell").length,
+        buyRatio: safeRatio(buyValue, totalValue),
+        sellRatio: safeRatio(sellValue, totalValue),
+        imbalance: safeRatio(buyValue - sellValue, totalValue)
+    };
 }
 
 
@@ -138,26 +176,14 @@ function validateTrades(trades) {
 
 function analyzeReferencePrice(trades) {
 
-    if (!trades.length) {
-        return {
-            price: null,
-            timestamp: null,
-            firstPrice: null,
-            firstTimestamp: null,
-            source: "historical-last-trade"
-        };
-    }
-
     const first = trades[0];
     const last = trades[trades.length - 1];
 
     return {
         price: last.price,
         timestamp: last.time,
-
         firstPrice: first.price,
         firstTimestamp: first.time,
-
         source: "historical-last-trade"
     };
 }
@@ -184,19 +210,16 @@ function analyzeZonePosition(reference, zone) {
     }
 
     const tolerance = width * CONFIG.BOUNDARY_TOLERANCE;
-
     const firstPrice = reference.firstPrice;
 
-    // هل انتقل السعر تاريخياً من جانب إلى الجانب المقابل؟
     const crossed =
         (firstPrice > zone.upper && price < zone.lower) ||
         (firstPrice < zone.lower && price > zone.upper);
 
     if (insideZone(price, zone)) {
-
         return {
             status: "داخل المنطقة",
-            description: "آخر سعر في البيانات يقع داخل منطقة الدخول",
+            description: "آخر تنفيذ تاريخي يقع داخل منطقة الدخول",
             distance: 0,
             distanceInZoneWidths: 0,
             location: "inside",
@@ -205,19 +228,17 @@ function analyzeZonePosition(reference, zone) {
     }
 
     if (crossed) {
+        const distance = Math.min(
+            Math.abs(price - zone.upper),
+            Math.abs(price - zone.lower)
+        );
 
         return {
-            status: "تجاوز المنطقة",
-            description: "السعر انتقل خلال الفترة المختارة من أحد جانبي المنطقة إلى الجانب الآخر",
-            distance: Math.min(
-                Math.abs(price - zone.upper),
-                Math.abs(price - zone.lower)
-            ),
-            distanceInZoneWidths:
-                Math.min(
-                    Math.abs(price - zone.upper),
-                    Math.abs(price - zone.lower)
-                ) / width,
+            status: "بدأ وانتهى على جانبي المنطقة",
+            description:
+                "بدأت العينة على أحد جانبي المنطقة وانتهت على الجانب الآخر. هذا لا يثبت وحده مسار العبور بين التنفيذات.",
+            distance,
+            distanceInZoneWidths: distance / width,
             location: price > zone.upper ? "above" : "below",
             crossed: true
         };
@@ -229,8 +250,8 @@ function analyzeZonePosition(reference, zone) {
 
         if (distance <= tolerance) {
             return {
-                status: "لامس الحد العلوي",
-                description: "آخر سعر قريب جداً من الحد العلوي للمنطقة",
+                status: "ملامسة الحد العلوي",
+                description: "آخر تنفيذ قريب جداً من الحد العلوي",
                 distance,
                 distanceInZoneWidths: distance / width,
                 location: "above",
@@ -251,7 +272,7 @@ function analyzeZonePosition(reference, zone) {
 
         return {
             status: "لم يصل إلى المنطقة",
-            description: "السعر ما زال فوق المنطقة وبعيداً عنها نسبياً",
+            description: "السعر ما زال فوق منطقة الدخول",
             distance,
             distanceInZoneWidths: distance / width,
             location: "above",
@@ -263,8 +284,8 @@ function analyzeZonePosition(reference, zone) {
 
     if (distance <= tolerance) {
         return {
-            status: "لامس الحد السفلي",
-            description: "آخر سعر قريب جداً من الحد السفلي للمنطقة",
+            status: "ملامسة الحد السفلي",
+            description: "آخر تنفيذ قريب جداً من الحد السفلي",
             distance,
             distanceInZoneWidths: distance / width,
             location: "below",
@@ -285,7 +306,7 @@ function analyzeZonePosition(reference, zone) {
 
     return {
         status: "لم يصل إلى المنطقة",
-        description: "السعر ما زال تحت المنطقة وبعيداً عنها نسبياً",
+        description: "السعر ما زال تحت منطقة الدخول",
         distance,
         distanceInZoneWidths: distance / width,
         location: "below",
@@ -304,30 +325,22 @@ function getApproachTrades(trades, reference, zone, position) {
 
     const price = reference.price;
 
-    // إذا كان السعر داخل المنطقة، فالممر هو المنطقة نفسها
     if (position.location === "inside") {
-        return trades.filter(trade =>
-            insideZone(trade.price, zone)
-        );
+        return trades.filter(t => insideZone(t.price, zone));
     }
 
-    // إذا تجاوز المنطقة، لا ننشئ ممر اقتراب مضللاً
-    if (position.crossed) {
-        return [];
-    }
+    if (position.crossed) return [];
 
-    // السعر أعلى المنطقة: الممر بين الحد العلوي والسعر
     if (price > zone.upper) {
-        return trades.filter(trade =>
-            trade.price >= zone.upper &&
-            trade.price <= price
+        return trades.filter(t =>
+            t.price >= zone.upper &&
+            t.price <= price
         );
     }
 
-    // السعر أسفل المنطقة: الممر بين السعر والحد السفلي
-    return trades.filter(trade =>
-        trade.price >= price &&
-        trade.price <= zone.lower
+    return trades.filter(t =>
+        t.price >= price &&
+        t.price <= zone.lower
     );
 }
 
@@ -348,7 +361,7 @@ function analyzeLargeTrades(trades) {
         };
     }
 
-    const values = trades.map(trade => trade.value);
+    const values = trades.map(t => t.value);
 
     const threshold = Math.max(
         percentile(values, 0.95),
@@ -356,23 +369,16 @@ function analyzeLargeTrades(trades) {
     );
 
     const large = trades.filter(
-        trade => trade.value >= threshold
+        t => t.value >= threshold
     );
+
+    const flow = getFlow(large);
 
     return {
         threshold,
         count: large.length,
-
-        buyValue: sum(
-            large.filter(t => getSide(t) === "buy")
-                .map(t => t.value)
-        ),
-
-        sellValue: sum(
-            large.filter(t => getSide(t) === "sell")
-                .map(t => t.value)
-        ),
-
+        buyValue: flow.buyValue,
+        sellValue: flow.sellValue,
         trades: large
     };
 }
@@ -416,7 +422,7 @@ function analyzeClusters(trades) {
 
     const active = [...windows.values()]
         .sort((a, b) => a.start - b.start)
-        .filter(window => window.count >= 5);
+        .filter(w => w.count >= 5);
 
     return {
         activeWindows: active.length,
@@ -443,13 +449,23 @@ function analyzeCapital(trades) {
     }
 
     const threshold = percentile(
-        trades.map(trade => trade.value),
+        trades.map(t => t.value),
         CONFIG.CAPITAL_PERCENTILE
     );
 
     const large = trades.filter(
-        trade => trade.value >= threshold
+        t => t.value >= threshold
     );
+
+    if (!large.length) {
+        return {
+            threshold,
+            count: 0,
+            buyValue: 0,
+            sellValue: 0,
+            levels: []
+        };
+    }
 
     const minPrice = Math.min(...large.map(t => t.price));
     const maxPrice = Math.max(...large.map(t => t.price));
@@ -491,20 +507,13 @@ function analyzeCapital(trades) {
         }
     }
 
+    const flow = getFlow(large);
+
     return {
         threshold,
         count: large.length,
-
-        buyValue: sum(
-            large.filter(t => getSide(t) === "buy")
-                .map(t => t.value)
-        ),
-
-        sellValue: sum(
-            large.filter(t => getSide(t) === "sell")
-                .map(t => t.value)
-        ),
-
+        buyValue: flow.buyValue,
+        sellValue: flow.sellValue,
         levels: [...buckets.values()]
     };
 }
@@ -567,9 +576,7 @@ function analyzeActivity(trades) {
             window.start - previousTime ===
                 CONFIG.ACTIVITY_WINDOW_MS;
 
-        if (!adjacent) {
-            previousSide = null;
-        }
+        if (!adjacent) previousSide = null;
 
         if (
             currentSide &&
@@ -587,33 +594,20 @@ function analyzeActivity(trades) {
         ? timeline[timeline.length - 1].start
         : 0;
 
-    const recent = timeline.filter(window =>
-        window.start >=
-        latest - 29 * CONFIG.ACTIVITY_WINDOW_MS
+    const recent = timeline.filter(w =>
+        w.start >= latest - 29 * CONFIG.ACTIVITY_WINDOW_MS
     );
 
+    const flow = getFlow(trades);
+
     return {
-        buyValue: sum(timeline.map(w => w.buyValue)),
-        sellValue: sum(timeline.map(w => w.sellValue)),
-
-        buyCount: trades.filter(
-            t => getSide(t) === "buy"
-        ).length,
-
-        sellCount: trades.filter(
-            t => getSide(t) === "sell"
-        ).length,
-
+        buyValue: flow.buyValue,
+        sellValue: flow.sellValue,
+        buyCount: flow.buyCount,
+        sellCount: flow.sellCount,
         transitions,
-
-        recentBuyValue: sum(
-            recent.map(w => w.buyValue)
-        ),
-
-        recentSellValue: sum(
-            recent.map(w => w.sellValue)
-        ),
-
+        recentBuyValue: sum(recent.map(w => w.buyValue)),
+        recentSellValue: sum(recent.map(w => w.sellValue)),
         activeMinutes: timeline.length,
         timeline
     };
@@ -627,53 +621,33 @@ function analyzeActivity(trades) {
 function analyzeZone(trades, zone) {
 
     const zoneTrades = trades.filter(
-        trade => insideZone(trade.price, zone)
+        t => insideZone(t.price, zone)
     );
 
     const width = zone.upper - zone.lower;
     const tolerance = width * 0.25;
 
-    const nearbyTrades = trades.filter(
-        trade =>
-            trade.price >= zone.lower - tolerance &&
-            trade.price <= zone.upper + tolerance
+    const nearbyTrades = trades.filter(t =>
+        t.price >= zone.lower - tolerance &&
+        t.price <= zone.upper + tolerance
     );
 
-    const buyValue = sum(
-        zoneTrades
-            .filter(t => getSide(t) === "buy")
-            .map(t => t.value)
-    );
-
-    const sellValue = sum(
-        zoneTrades
-            .filter(t => getSide(t) === "sell")
-            .map(t => t.value)
-    );
+    const flow = getFlow(zoneTrades);
 
     return {
         count: zoneTrades.length,
-        buyValue,
-        sellValue,
 
-        totalValue: buyValue + sellValue,
+        buyValue: flow.buyValue,
+        sellValue: flow.sellValue,
+        totalValue: flow.totalValue,
 
-        buyCount: zoneTrades.filter(
-            t => getSide(t) === "buy"
-        ).length,
+        buyCount: flow.buyCount,
+        sellCount: flow.sellCount,
 
-        sellCount: zoneTrades.filter(
-            t => getSide(t) === "sell"
-        ).length,
-
-        medianPrice: median(
-            zoneTrades.map(t => t.price)
-        ),
+        medianPrice: median(zoneTrades.map(t => t.price)),
 
         nearbyCount: nearbyTrades.length,
-        nearbyValue: sum(
-            nearbyTrades.map(t => t.value)
-        ),
+        nearbyValue: sum(nearbyTrades.map(t => t.value)),
 
         trades: zoneTrades
     };
@@ -684,54 +658,30 @@ function analyzeZone(trades, zone) {
    APPROACH ANALYSIS
 ===================================== */
 
-function analyzeApproach(trades, zone, position) {
-
-    const reference = trades.length
-        ? trades[trades.length - 1].price
-        : null;
-
-    if (reference === null) {
-        return {
-            count: 0,
-            buyValue: 0,
-            sellValue: 0,
-            totalValue: 0,
-            largeTrades: null,
-            clusters: null,
-            capital: null,
-            activity: null
-        };
-    }
+function analyzeApproach(trades, referencePrice, zone, position) {
 
     const corridorTrades = getApproachTrades(
         trades,
-        { price: reference },
+        referencePrice,
         zone,
         position
     );
 
-    const buyValue = sum(
-        corridorTrades
-            .filter(t => getSide(t) === "buy")
-            .map(t => t.value)
-    );
-
-    const sellValue = sum(
-        corridorTrades
-            .filter(t => getSide(t) === "sell")
-            .map(t => t.value)
-    );
+    const flow = getFlow(corridorTrades);
 
     return {
         count: corridorTrades.length,
-        buyValue,
-        sellValue,
-        totalValue: buyValue + sellValue,
+        buyValue: flow.buyValue,
+        sellValue: flow.sellValue,
+        totalValue: flow.totalValue,
 
         largeTrades: analyzeLargeTrades(corridorTrades),
         clusters: analyzeClusters(corridorTrades),
         capital: analyzeCapital(corridorTrades),
         activity: analyzeActivity(corridorTrades),
+
+        firstPrice: corridorTrades[0]?.price ?? null,
+        lastPrice: corridorTrades[corridorTrades.length - 1]?.price ?? null,
 
         trades: corridorTrades
     };
@@ -745,20 +695,21 @@ function analyzeApproach(trades, zone, position) {
 function analyzeHistoricalInteraction(trades, zone) {
 
     const inside = trades.filter(
-        trade => insideZone(trade.price, zone)
+        t => insideZone(t.price, zone)
     );
 
     const first = trades[0] || null;
     const last = trades[trades.length - 1] || null;
 
-    const upperExecutions = trades.filter(
-        trade => Math.abs(trade.price - zone.upper) <=
-            (zone.upper - zone.lower) * 0.02
+    const tolerance =
+        (zone.upper - zone.lower) * CONFIG.BOUNDARY_TOLERANCE;
+
+    const upperExecutions = trades.filter(t =>
+        Math.abs(t.price - zone.upper) <= tolerance
     );
 
-    const lowerExecutions = trades.filter(
-        trade => Math.abs(trade.price - zone.lower) <=
-            (zone.upper - zone.lower) * 0.02
+    const lowerExecutions = trades.filter(t =>
+        Math.abs(t.price - zone.lower) <= tolerance
     );
 
     return {
@@ -774,7 +725,402 @@ function analyzeHistoricalInteraction(trades, zone) {
         firstTimestamp: first?.time ?? null,
         lastTimestamp: last?.time ?? null,
 
-        note: "يعتمد هذا التحليل على أسعار التنفيذات، ولا يثبت أن ذيل شمعة لمس الحد بين تنفيذين"
+        note:
+            "يعتمد التحليل على أسعار التنفيذات، ولا يثبت أن ذيل شمعة لمس الحد بين تنفيذين."
+    };
+}
+
+
+/* =====================================
+   DIRECTIONAL EVIDENCE
+===================================== */
+
+function classifyDirectionalFlow(flow, direction, minCount = 1) {
+
+    const totalCount = flow.buyCount + flow.sellCount;
+
+    if (
+        totalCount < minCount ||
+        flow.totalValue <= 0
+    ) {
+        return {
+            status: "insufficient",
+            label: "غير كافٍ",
+            alignedRatio: null,
+            opposingRatio: null,
+            imbalance: null
+        };
+    }
+
+    const aligned = direction === "long"
+        ? flow.buyValue
+        : flow.sellValue;
+
+    const opposing = direction === "long"
+        ? flow.sellValue
+        : flow.buyValue;
+
+    const alignedRatio = safeRatio(aligned, flow.totalValue);
+    const opposingRatio = safeRatio(opposing, flow.totalValue);
+
+    const imbalance = alignedRatio - opposingRatio;
+
+    let status = "neutral";
+    let label = "متقارب";
+
+    if (imbalance >= CONFIG.DIRECTIONAL_THRESHOLD) {
+        status = "support";
+        label = "مؤيد للسيناريو";
+    } else if (imbalance <= -CONFIG.DIRECTIONAL_THRESHOLD) {
+        status = "oppose";
+        label = "معارض للسيناريو";
+    }
+
+    return {
+        status,
+        label,
+        alignedValue: aligned,
+        opposingValue: opposing,
+        alignedRatio,
+        opposingRatio,
+        imbalance
+    };
+}
+
+
+/* =====================================
+   SOURCE EVALUATION
+===================================== */
+
+function evaluateZoneSources(zoneTrades, direction) {
+
+    const large = analyzeLargeTrades(zoneTrades);
+    const clusters = analyzeClusters(zoneTrades);
+    const capital = analyzeCapital(zoneTrades);
+    const activity = analyzeActivity(zoneTrades);
+
+    const largeFlow = getFlow(large.trades);
+
+    const clusterFlow = {
+        buyValue: sum(clusters.clusters.map(c => c.buyValue)),
+        sellValue: sum(clusters.clusters.map(c => c.sellValue)),
+        totalValue: sum(clusters.clusters.map(c => c.totalValue)),
+        buyCount: 0,
+        sellCount: 0
+    };
+
+    const capitalFlow = {
+        buyValue: capital.buyValue,
+        sellValue: capital.sellValue,
+        totalValue: capital.buyValue + capital.sellValue,
+        buyCount: capital.count,
+        sellCount: capital.count
+    };
+
+    const activityFlow = {
+        buyValue: activity.buyValue,
+        sellValue: activity.buyValue + activity.sellValue,
+        buyCount: activity.buyCount,
+        sellCount: activity.sellCount
+    };
+
+    const sources = [
+        {
+            id: "largeTrades",
+            name: "الصفقات الكبيرة",
+            description:
+                "اتجاه المبادرة داخل المنطقة لدى التنفيذات الكبيرة.",
+            result: classifyDirectionalFlow(
+                largeFlow,
+                direction,
+                CONFIG.MIN_LARGE_TRADES
+            )
+        },
+        {
+            id: "clusters",
+            name: "عناقيد التنفيذ",
+            description:
+                "اتجاه المبادرة في نوافذ النشاط المتجمعة داخل المنطقة.",
+            result: clusters.activeWindows >= CONFIG.MIN_CLUSTER_WINDOWS
+                ? classifyDirectionalFlow(
+                    clusterFlow,
+                    direction,
+                    1
+                )
+                : {
+                    status: "insufficient",
+                    label: "غير كافٍ",
+                    alignedRatio: null,
+                    opposingRatio: null,
+                    imbalance: null
+                }
+        },
+        {
+            id: "capital",
+            name: "بصمة رأس المال",
+            description:
+                "اتجاه المبادرة في الشريحة الأعلى قيمة من التنفيذات داخل المنطقة.",
+            result: classifyDirectionalFlow(
+                capitalFlow,
+                direction,
+                CONFIG.MIN_CAPITAL_TRADES
+            )
+        },
+        {
+            id: "activity",
+            name: "نشاط الشراء والبيع",
+            description:
+                "اتجاه المبادرة عبر التنفيذات والنوافذ الزمنية داخل المنطقة.",
+            result: activity.activeMinutes >= CONFIG.MIN_ACTIVITY_WINDOWS
+                ? classifyDirectionalFlow(
+                    activityFlow,
+                    direction,
+                    1
+                )
+                : {
+                    status: "insufficient",
+                    label: "غير كافٍ",
+                    alignedRatio: null,
+                    opposingRatio: null,
+                    imbalance: null
+                }
+        }
+    ];
+
+    return {
+        sources,
+        details: {
+            largeTrades: large,
+            clusters,
+            capital,
+            activity
+        }
+    };
+}
+
+
+/* =====================================
+   APPROACH INTERPRETATION
+===================================== */
+
+function evaluateApproach(approach, position, direction) {
+
+    if (!approach.count || !approach.totalValue) {
+        return {
+            status: "insufficient",
+            label: "لا توجد أدلة كافية في الممر",
+            explanation:
+                "لا توجد تنفيذات كافية في الممر السعري بين آخر سعر تاريخي والمنطقة."
+        };
+    }
+
+    const flow = getFlow(approach.trades);
+
+    const towardZoneSide =
+        position.location === "above" ? "sell" : "buy";
+
+    const towardZoneValue =
+        towardZoneSide === "sell"
+            ? flow.sellValue
+            : flow.buyValue;
+
+    const awayFromZoneValue =
+        towardZoneSide === "sell"
+            ? flow.buyValue
+            : flow.sellValue;
+
+    const towardRatio = safeRatio(
+        towardZoneValue,
+        flow.totalValue
+    );
+
+    const awayRatio = safeRatio(
+        awayFromZoneValue,
+        flow.totalValue
+    );
+
+    let explanation;
+
+    if (towardRatio >= 0.60) {
+        explanation =
+            "المبادرة الغالبة في الممر تتوافق مع حركة السعر باتجاه المنطقة. هذا يصف ضغط الوصول إليها، ولا يثبت صلاحية المنطقة أو نجاح الصفقة.";
+    } else if (awayRatio >= 0.60) {
+        explanation =
+            "المبادرة الغالبة في الممر تتوافق مع ضغط يدفع السعر بعيداً عن المنطقة. قد يؤخر ذلك الوصول إليها، لكنه لا يثبت إلغاء السيناريو.";
+    } else {
+        explanation =
+            "المبادرة في الممر متقاربة نسبياً، ولا يظهر اتجاه واضح يهيمن على التنفيذات.";
+    }
+
+    return {
+        status: "context",
+        label: "سياق الوصول إلى المنطقة",
+        towardZoneSide,
+        towardZoneRatio: towardRatio,
+        awayFromZoneRatio: awayRatio,
+        explanation
+    };
+}
+
+
+/* =====================================
+   STRATEGIC VERDICT
+===================================== */
+
+function evaluateStrategy(
+    direction,
+    position,
+    zoneEvidence,
+    sourceEvaluation,
+    approachEvaluation
+) {
+
+    const zoneFlow = getFlow(zoneEvidence.trades);
+
+    const primaryFlow = classifyDirectionalFlow(
+        zoneFlow,
+        direction,
+        CONFIG.MIN_ZONE_TRADES
+    );
+
+    const available = sourceEvaluation.sources.filter(
+        source => source.result.status !== "insufficient"
+    );
+
+    const supportCount = available.filter(
+        source => source.result.status === "support"
+    ).length;
+
+    const opposeCount = available.filter(
+        source => source.result.status === "oppose"
+    ).length;
+
+    const neutralCount = available.filter(
+        source => source.result.status === "neutral"
+    ).length;
+
+    let verdict = "insufficient";
+    let title = "الأدلة غير كافية";
+    let explanation = "";
+    let tone = "neutral";
+
+    if (zoneEvidence.count < CONFIG.MIN_ZONE_TRADES) {
+
+        verdict = "insufficient";
+        title = "لا يوجد تأكيد كافٍ من داخل المنطقة";
+        tone = "neutral";
+
+        explanation =
+            `رصد المحرك ${zoneEvidence.count} تنفيذاً فقط داخل منطقة الدخول. ` +
+            "هذا لا يعني أن المنطقة ضعيفة أو أن السيناريو خاطئ؛ بل يعني أن العينة لا تحتوي على تفاعل كافٍ داخل المنطقة للحكم عليها. " +
+            "يمكن الاستفادة من تحليل الممر المؤدي إليها لفهم ضغط الوصول، لكن لا يجوز اعتباره تأكيداً للمنطقة.";
+
+    } else if (
+        primaryFlow.status === "support" &&
+        supportCount >= 2 &&
+        opposeCount === 0
+    ) {
+
+        verdict = "support";
+        title = "الأدلة تؤيد سيناريو الصفقة";
+        tone = "positive";
+
+        explanation =
+            `المبادرة داخل المنطقة تميل إلى اتجاه ${formatDirection(direction)}، ` +
+            "كما أن أكثر من مصدر تحليلي يدعم هذا الاتجاه دون ظهور مصدر متاح يعارضه بوضوح. " +
+            "هذا توافق بين الأدلة المرصودة والسيناريو، وليس ضماناً للارتداد أو نجاح الصفقة.";
+
+    } else if (
+        primaryFlow.status === "oppose" &&
+        opposeCount >= 2 &&
+        supportCount === 0
+    ) {
+
+        verdict = "oppose";
+        title = "الأدلة تعارض سيناريو الصفقة";
+        tone = "negative";
+
+        explanation =
+            `المبادرة داخل المنطقة تميل عكس اتجاه ${formatDirection(direction)}، ` +
+            "وتظهر هذه الإشارة في أكثر من مصدر متاح. هذه علامة تحذير تستحق الانتباه، لكنها لا تعني أن الصفقة مستحيلة أو أن المنطقة فشلت حتماً.";
+
+    } else if (
+        supportCount > 0 &&
+        opposeCount > 0
+    ) {
+
+        verdict = "mixed";
+        title = "الأدلة مختلطة";
+        tone = "warning";
+
+        explanation =
+            "توجد مصادر تدعم سيناريو الصفقة وأخرى تعارضه. لا يصح اختزال هذا الاختلاف في تأييد أو رفض قاطع. يجب النظر إلى تفاصيل كل مصدر، وحجم التنفيذات، ومكان حدوثها داخل المنطقة.";
+
+    } else if (
+        primaryFlow.status === "neutral" ||
+        neutralCount > 0
+    ) {
+
+        verdict = "mixed";
+        title = "لا يوجد اتجاه حاسم";
+        tone = "warning";
+
+        explanation =
+            "التنفيذات داخل المنطقة لا تظهر تفوقاً واضحاً للمبادرة المتوافقة مع السيناريو أو المعارضة له. البيانات موجودة، لكنها لا تقدم تأكيداً اتجاهياً قوياً.";
+
+    } else {
+
+        verdict = "insufficient";
+        title = "الأدلة غير كافية";
+        tone = "neutral";
+
+        explanation =
+            "توجد بعض البيانات داخل المنطقة، لكن المصادر المتاحة لا تكوّن صورة متماسكة تسمح بتأييد السيناريو أو معارضته.";
+    }
+
+    const reasons = [];
+
+    reasons.push({
+        name: "تدفق التنفيذات داخل المنطقة",
+        status: primaryFlow.label,
+        detail: primaryFlow.status === "insufficient"
+            ? "عدد التنفيذات أقل من الحد المطلوب للتحليل."
+            : `المبادرة المتوافقة مع السيناريو تمثل ${(primaryFlow.alignedRatio * 100).toFixed(1)}% من قيمة التنفيذات، مقابل ${(primaryFlow.opposingRatio * 100).toFixed(1)}% للمبادرة المعارضة.`
+    });
+
+    for (const source of sourceEvaluation.sources) {
+        reasons.push({
+            name: source.name,
+            status: source.result.label,
+            detail: source.description
+        });
+    }
+
+    return {
+        verdict,
+        title,
+        tone,
+        explanation,
+
+        direction,
+        directionName: formatDirection(direction),
+
+        zoneTradeCount: zoneEvidence.count,
+
+        primaryFlow,
+        supportCount,
+        opposeCount,
+        neutralCount,
+        availableSources: available.length,
+
+        reasons,
+
+        approach: approachEvaluation,
+
+        interpretation:
+            "هذا التقييم يقيس توافق الأدلة المرصودة مع سيناريو الصفقة، ولا يمثل احتمال نجاح الصفقة أو توقعاً مضموناً لاتجاه السعر.",
+
+        advisorOnly: true
     };
 }
 
@@ -782,7 +1128,6 @@ function analyzeHistoricalInteraction(trades, zone) {
 /* =====================================
    MAIN STRATEGY ANALYSIS
 ===================================== */
-
 
 export async function analyzeStrategy(settings) {
 
@@ -846,12 +1191,32 @@ export async function analyzeStrategy(settings) {
 
     const approach = analyzeApproach(
         trades,
+        referencePrice,
         zone,
         position
     );
 
     const historicalInteraction =
         analyzeHistoricalInteraction(trades, zone);
+
+    const sourceEvaluation = evaluateZoneSources(
+        zoneEvidence.trades,
+        direction
+    );
+
+    const approachEvaluation = evaluateApproach(
+        approach,
+        position,
+        direction
+    );
+
+    const evaluation = evaluateStrategy(
+        direction,
+        position,
+        zoneEvidence,
+        sourceEvaluation,
+        approachEvaluation
+    );
 
     return {
         market,
@@ -866,6 +1231,8 @@ export async function analyzeStrategy(settings) {
 
         position,
 
+        evaluation,
+
         evidence: {
             largeTrades,
             clusters,
@@ -879,7 +1246,9 @@ export async function analyzeStrategy(settings) {
 
             approach,
 
-            historicalInteraction
+            historicalInteraction,
+
+            sourceEvaluation
         },
 
         limitations: [
@@ -888,8 +1257,12 @@ export async function analyzeStrategy(settings) {
             "التنفيذات العامة لا تثبت أنها تعود إلى حساب واحد.",
             "الصفقات الكبيرة لا تثبت وحدها وجود حوت واحد.",
             "التنفيذات لا تكشف الأوامر المخفية أو هوية أصحابها.",
-            "تحليل الاقتراب يقيس التنفيذات في الممر السعري ولا يثبت اتجاه الحركة بين التنفيذات.",
-            "ملامسة الحد عبر أسعار التنفيذ لا تثبت أن ذيل شمعة لمسه."
+            "المبادرة الشرائية أو البيعية لا تكشف وحدها الطرف السلبي الذي استقبل التنفيذ.",
+            "تحليل الممر يصف ضغط التنفيذات ولا يثبت أن الحركة ستستمر حتى المنطقة.",
+            "التنفيذات لا تثبت أن ذيل شمعة لمس حدود المنطقة.",
+            "مصادر الأدلة الأربعة مشتقة من مجموعة التنفيذات نفسها، ولذلك لا تعد أربعة مصادر مستقلة إحصائياً.",
+            "التقييم يقيس توافق الأدلة مع السيناريو ولا يحسب احتمال نجاح الصفقة."
         ]
     };
-}
+                                     }
+       
