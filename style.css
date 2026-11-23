@@ -1,14 +1,14 @@
 
 /* =========================================
    WHALE RADAR
-   Main Interface Design
+   Main Interface Style
 ========================================= */
 
-/* الإعدادات العامة */
 :root {
     --bg-main: #080e1b;
     --bg-card: #111b2d;
     --bg-input: #0c1627;
+
     --border: #23334a;
 
     --text-main: #edf4ff;
@@ -23,7 +23,11 @@
     --radius: 16px;
 }
 
-/* إعادة ضبط العناصر */
+
+/* =========================================
+   GENERAL
+========================================= */
+
 * {
     margin: 0;
     padding: 0;
@@ -38,13 +42,28 @@ body {
     line-height: 1.6;
 }
 
-/* الحاوية الرئيسية */
+button,
+input {
+    font-family: inherit;
+}
+
+button {
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+}
+
+
+/* =========================================
+   MAIN CONTAINER
+========================================= */
+
 .app-container {
     width: 100%;
     max-width: 850px;
     margin: auto;
     padding: 20px 16px 35px;
 }
+
 
 /* =========================================
    HEADER
@@ -71,9 +90,11 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
+
     background: #14283a;
     border: 1px solid #24516a;
     border-radius: 14px;
+
     font-size: 25px;
 }
 
@@ -92,12 +113,15 @@ body {
     color: var(--primary);
     background: rgba(32, 201, 151, 0.10);
     border: 1px solid rgba(32, 201, 151, 0.25);
+
     padding: 6px 10px;
     border-radius: 8px;
+
     font-size: 10px;
     font-weight: 700;
     white-space: nowrap;
 }
+
 
 /* =========================================
    SECTIONS
@@ -109,6 +133,7 @@ body {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
+
     padding: 20px;
     margin-bottom: 20px;
 }
@@ -118,6 +143,7 @@ body {
     font-size: 17px;
     font-weight: 700;
     margin-bottom: 20px;
+
     position: relative;
     padding-right: 12px;
 }
@@ -125,14 +151,18 @@ body {
 .settings-section h2::before,
 .radar-section h2::before {
     content: "";
+
     position: absolute;
     right: 0;
     top: 5px;
+
     width: 4px;
     height: 17px;
+
     background: var(--primary);
     border-radius: 5px;
 }
+
 
 /* =========================================
    INPUTS
@@ -144,22 +174,27 @@ body {
 
 .form-group label {
     display: block;
+
     font-size: 13px;
     font-weight: 600;
     color: #c4d1e3;
+
     margin-bottom: 8px;
 }
 
 .form-group input {
     width: 100%;
     height: 48px;
+
     background: var(--bg-input);
     border: 1px solid var(--border);
     border-radius: 10px;
+
     padding: 0 14px;
+
     color: var(--text-main);
-    font-family: inherit;
     font-size: 14px;
+
     outline: none;
     transition: 0.2s ease;
 }
@@ -173,6 +208,7 @@ body {
     color: #61738b;
 }
 
+
 /* =========================================
    TIME OPTIONS
 ========================================= */
@@ -185,13 +221,15 @@ body {
 
 .time-btn {
     min-height: 43px;
+
     background: var(--bg-input);
     border: 1px solid var(--border);
     border-radius: 9px;
+
     color: var(--text-muted);
-    font-family: inherit;
     font-size: 13px;
     font-weight: 600;
+
     cursor: pointer;
     transition: 0.2s ease;
 }
@@ -207,18 +245,24 @@ body {
     color: var(--primary);
 }
 
-/* الفترة المخصصة */
+
+/* =========================================
+   CUSTOM PERIOD
+========================================= */
+
 .custom-period {
     padding: 15px;
     margin-top: 15px;
+
     background: var(--bg-input);
     border: 1px solid var(--border);
     border-radius: 12px;
 }
 
 .hidden {
-    display: none;
+    display: none !important;
 }
+
 
 /* =========================================
    SCAN BUTTON
@@ -228,13 +272,20 @@ body {
     width: 100%;
     min-height: 51px;
     margin-top: 5px;
-    background: linear-gradient(135deg, #20c997, #159b76);
+
+    background: linear-gradient(
+        135deg,
+        #20c997,
+        #159b76
+    );
+
     border: none;
     border-radius: 11px;
+
     color: #041b16;
-    font-family: inherit;
     font-size: 16px;
     font-weight: 800;
+
     cursor: pointer;
     transition: 0.2s ease;
 }
@@ -248,6 +299,7 @@ body {
     transform: scale(0.98);
 }
 
+
 /* =========================================
    RADAR BUTTONS
 ========================================= */
@@ -260,6 +312,7 @@ body {
 
 .radar-button {
     min-height: 105px;
+
     display: flex;
     flex-direction: column;
     align-items: flex-start;
@@ -273,7 +326,6 @@ body {
     border-radius: 13px;
 
     color: var(--text-main);
-    font-family: inherit;
     font-size: 13px;
     font-weight: 600;
     text-align: right;
@@ -296,6 +348,7 @@ body {
     font-size: 25px;
 }
 
+
 /* =========================================
    RESULTS
 ========================================= */
@@ -304,6 +357,7 @@ body {
     display: none;
 }
 
+
 /* =========================================
    FOOTER
 ========================================= */
@@ -311,6 +365,7 @@ body {
 .app-footer {
     text-align: center;
     padding: 15px;
+
     color: #52647d;
     font-size: 11px;
     font-weight: 700;
@@ -319,14 +374,17 @@ body {
 
 .app-footer span {
     display: block;
+
     font-size: 10px;
     font-weight: 400;
     letter-spacing: 0;
+
     margin-top: 3px;
 }
 
+
 /* =========================================
-   MOBILE RESPONSIVE
+   MOBILE
 ========================================= */
 
 @media (max-width: 480px) {
@@ -366,10 +424,12 @@ body {
     .time-btn {
         font-size: 12px;
     }
+
 }
 
+
 /* =========================================
-   TABLET AND DESKTOP
+   TABLET & DESKTOP
 ========================================= */
 
 @media (min-width: 700px) {
