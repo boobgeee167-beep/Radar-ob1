@@ -1,620 +1,149 @@
+
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>رادار الحيتان والشارت — الساعي للكريبتو</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
-  <style>
-    body { font-family: 'Tajawal', sans-serif; background-color: #0f172a; color: #f8fafc; }
-    .tg-card { background-color: #1e293b; border: 1px solid #334155; }
-    .tg-input { background-color: #0f172a; border: 1px solid #334155; color: #ffffff; }
-    .tg-input:focus { border-color: #38bdf8; outline: none; }
-    .tab-btn { transition: all 0.2s ease; }
-    .tab-btn.active { background-color: #0284c7; color: #ffffff; border-color: #38bdf8; box-shadow: 0 4px 12px rgba(2, 132, 199, 0.35); }
-    .chevron { transition: transform 0.2s ease; }
-    .chevron.open { transform: rotate(180deg); }
-    .dir-ltr { direction: ltr; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0b1120">
+
+    <title>Whale Radar | رادار الحيتان</title>
+
+    <!-- الخط -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- التنسيق -->
+    <link rel="stylesheet" href="style.css">
+
+    <!-- Telegram Mini App -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
-<body class="min-h-screen flex flex-col justify-between p-3.5 selection:bg-sky-500 selection:text-white pb-10">
 
-  <!-- بطاقة قفل الصلاحيات -->
-  <div id="authLockCard" class="hidden w-full max-w-md mx-auto my-auto tg-card rounded-2xl p-6 text-center space-y-3 shadow-2xl border-rose-500/30">
-    <div class="inline-flex items-center justify-center p-4 bg-rose-500/10 rounded-full text-rose-500 border border-rose-500/20 mb-2">
-      <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m0 0v2m0-2h2m-2 0H10m12-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-    </div>
-    <h2 class="text-lg font-bold text-rose-400">⚠️ الوصول محظور</h2>
-    <p class="text-xs text-gray-400 leading-relaxed">عذراً، هذا التطبيق مخصص لأعضاء محددين فقط ولا تملك صلاحية لاستخدامه.</p>
-  </div>
+<body>
 
-  <!-- التطبيق الرئيسي -->
-  <div id="appContainer" class="w-full max-w-md mx-auto space-y-3.5">
+    <main class="app-container">
 
-    <!-- الهيدر -->
-    <div class="text-center space-y-1">
-      <div class="inline-flex items-center justify-center p-2.5 bg-sky-500/10 rounded-2xl mb-1 border border-sky-500/20 shadow-lg">
-        <span class="text-2xl">📡</span>
-      </div>
-      <h1 class="text-lg font-extrabold text-white tracking-wide">الساعي للكريبتو ★★★</h1>
-      <p class="text-xs text-sky-400 font-semibold">فاحص الشارت والسيولة والحيتان (فوق $500)</p>
-    </div>
-
-    <!-- شريط البحث وزر الفحص -->
-    <div class="tg-card rounded-2xl p-3.5 space-y-3 shadow-xl">
-      <div class="flex items-center gap-2">
-        <input
-          type="text"
-          id="symbol"
-          value="BMT"
-          placeholder="اسم العملة (مثال: BMT أو BTC)"
-          onkeydown="if(event.key==='Enter') runInspection()"
-          class="tg-input flex-1 p-3 rounded-xl text-sm font-bold text-center uppercase placeholder-gray-500"
-        >
-        <button
-          id="scanBtn"
-          type="button"
-          onclick="runInspection()"
-          class="px-5 py-3 rounded-xl font-extrabold text-white text-sm bg-gradient-to-r from-sky-500 to-blue-600 shadow-lg shadow-sky-500/25 active:scale-95 transition-all whitespace-nowrap"
-        >
-          فحص 🔍
-        </button>
-      </div>
-
-      <!-- اختيار المدة الزمنية أو فترة محددة -->
-      <div class="space-y-2 pt-0.5">
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-[11px] font-bold text-gray-400">الفترة الزمنية:</span>
-          <div class="grid grid-cols-4 gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 w-56">
-            <button type="button" onclick="setMode('1')" id="m-1" class="tab-btn py-1.5 text-[11px] font-bold rounded-lg text-gray-400">1س</button>
-            <button type="button" onclick="setMode('4')" id="m-4" class="tab-btn active py-1.5 text-[11px] font-bold rounded-lg text-gray-400">4س</button>
-            <button type="button" onclick="setMode('12')" id="m-12" class="tab-btn py-1.5 text-[11px] font-bold rounded-lg text-gray-400">12س</button>
-            <button type="button" onclick="setMode('custom')" id="m-custom" class="tab-btn py-1.5 text-[11px] font-bold rounded-lg text-gray-400">مخصص</button>
-          </div>
-        </div>
-
-        <!-- حقول الساعات المحددة (من - إلى) -->
-        <div id="customRangeBox" class="hidden bg-slate-900/90 border border-sky-500/30 rounded-xl p-2.5 space-y-2">
-          <div class="flex justify-between items-center text-[11px]">
-            <span class="font-bold text-sky-400">⏰ حدد فترة الساعات المطلوبة:</span>
-            <span class="text-[10px] text-gray-400">مثال: 12:30 إلى 15:45</span>
-          </div>
-          <div class="grid grid-cols-2 gap-2.5 dir-ltr">
-            <div>
-              <label class="block text-[10px] text-gray-400 mb-1 text-right">من الساعة</label>
-              <input type="time" id="startTimeInput" value="12:30" class="tg-input w-full p-2 rounded-lg text-xs font-bold text-center">
-            </div>
-            <div>
-              <label class="block text-[10px] text-gray-400 mb-1 text-right">إلى الساعة</label>
-              <input type="time" id="endTimeInput" value="15:45" class="tg-input w-full p-2 rounded-lg text-xs font-bold text-center">
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- شريط التقدم عند الفحص -->
-      <div id="statusBox" class="hidden bg-slate-900/95 border border-sky-500/30 rounded-xl p-2.5 space-y-1.5">
-        <div id="statusText" class="text-xs font-bold text-sky-400 text-center">جاري تجهيز الفحص...</div>
-        <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-          <div id="progressBar" class="bg-sky-500 h-full transition-all duration-300" style="width: 15%"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- القوائم المنسدلة بعد الفحص -->
-    <div id="accordionsWrapper" class="hidden space-y-3">
-
-      <!-- القائمة المنسدلة الأولى: شارت TradingView -->
-      <div class="tg-card rounded-2xl overflow-hidden shadow-xl border-sky-500/25">
-        <button
-          type="button"
-          onclick="toggleAccordion('chart')"
-          class="w-full flex items-center justify-between p-3.5 text-right bg-slate-800/80 hover:bg-slate-800 transition"
-        >
-          <div class="flex items-center gap-2">
-            <span class="text-base">📈</span>
-            <span class="text-sm font-extrabold text-white">1. شارت TradingView</span>
-            <span id="chartPairBadge" class="text-[11px] bg-sky-500/15 text-sky-400 px-2 py-0.5 rounded-full border border-sky-500/25 font-bold dir-ltr">BINANCE:BMTUSDT</span>
-          </div>
-          <svg id="chevron-chart" class="chevron w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"></path>
-          </svg>
-        </button>
-
-        <div id="panel-chart" class="p-3 bg-slate-950/70 border-t border-slate-700/70 space-y-2">
-          <div id="tv_chart_container" class="w-full h-[380px] rounded-xl overflow-hidden border border-slate-800 bg-slate-950"></div>
-          <p class="text-[10px] text-gray-500 text-center">شارت TradingView المجاني للعملة المحددة (يمكن طيه أو فتحه متى شئت).</p>
-        </div>
-      </div>
-
-      <!-- القائمة المنسدلة الثانية: بيانات الحيتان وتمركز السيولة -->
-      <div class="tg-card rounded-2xl overflow-hidden shadow-xl border-amber-500/25">
-        <button
-          type="button"
-          onclick="toggleAccordion('data')"
-          class="w-full flex items-center justify-between p-3.5 text-right bg-slate-800/80 hover:bg-slate-800 transition"
-        >
-          <div class="flex items-center gap-2">
-            <span class="text-base">🐋</span>
-            <span class="text-sm font-extrabold text-white">2. بيانات الحيتان والسيولة</span>
-            <span id="tradesCountBadge" class="text-[11px] bg-amber-500/15 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/25 font-bold">0 صفقة</span>
-          </div>
-          <svg id="chevron-data" class="chevron open w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"></path>
-          </svg>
-        </button>
-
-        <div id="panel-data" class="hidden p-3.5 bg-slate-950/60 border-t border-slate-700/70 space-y-3.5">
-
-          <!-- ملخص أوامر السوق vs الحدي -->
-          <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 space-y-2.5">
-            <div class="flex justify-between items-center text-xs">
-              <span class="font-bold text-sky-400">ملخص التنفيذ (سوق vs حدي)</span>
-              <span id="periodLabel" class="text-[11px] text-gray-400 font-bold">آخر 4 ساعات</span>
+        <!-- رأس التطبيق -->
+        <header class="app-header">
+            <div class="logo">
+                <span class="logo-icon">🐋</span>
+                <div>
+                    <h1>WHALE RADAR</h1>
+                    <p>رادار مراقبة نشاط السوق</p>
+                </div>
             </div>
 
-            <div class="grid grid-cols-2 gap-2 text-center">
-              <div class="bg-emerald-950/40 border border-emerald-500/30 rounded-xl p-2">
-                <div class="text-[11px] text-emerald-400 font-bold">🟢 شراء سوق (Taker Buy)</div>
-                <div id="mBuyVol" class="text-sm font-extrabold text-white mt-0.5 dir-ltr">$0</div>
-                <div id="mBuyCnt" class="text-[10px] text-gray-400">0 صفقة</div>
-              </div>
-              <div class="bg-rose-950/40 border border-rose-500/30 rounded-xl p-2">
-                <div class="text-[11px] text-rose-400 font-bold">🔴 بيع سوق (Taker Sell)</div>
-                <div id="mSellVol" class="text-sm font-extrabold text-white mt-0.5 dir-ltr">$0</div>
-                <div id="mSellCnt" class="text-[10px] text-gray-400">0 صفقة</div>
-              </div>
+            <span class="market-label">BINANCE SPOT</span>
+        </header>
+
+
+        <!-- إعدادات الفحص -->
+        <section class="settings-section">
+
+            <h2>إعدادات الفحص</h2>
+
+            <div class="form-group">
+                <label for="symbol">رمز العملة</label>
+                <input
+                    type="text"
+                    id="symbol"
+                    placeholder="مثال: BTC"
+                    autocomplete="off"
+                >
             </div>
 
-            <div class="flex justify-between items-center bg-slate-950 px-3 py-2 rounded-lg border border-slate-800/90 text-xs">
-              <span class="text-gray-300 font-bold">⚖️ صافي الدلتا:</span>
-              <span id="netDeltaVal" class="font-extrabold dir-ltr">$0</span>
+            <div class="form-group">
+                <label>الفترة الزمنية</label>
+
+                <div class="time-options">
+                    <button class="time-btn" data-period="1h">1 ساعة</button>
+                    <button class="time-btn active" data-period="4h">4 ساعات</button>
+                    <button class="time-btn" data-period="12h">12 ساعة</button>
+                    <button class="time-btn" data-period="custom">مخصص</button>
+                </div>
             </div>
-            <p class="text-[10px] text-gray-500 leading-relaxed">
-              ملاحظة: الطرف المقابل لأمر السوق المنفذ هو أمر حدي (Limit) انتظر في دفتر الأوامر وتم تنفيذه.
-            </p>
-          </div>
 
-          <!-- تمركز الطلبات -->
-          <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 space-y-2">
-            <h3 class="text-xs font-extrabold text-amber-400">🎯 أين تركزت الطلبات (مناطق السيولة)</h3>
-            <div class="overflow-x-auto">
-              <table class="w-full text-[11px] text-right border-collapse">
-                <thead>
-                  <tr class="text-gray-400 border-b border-slate-800">
-                    <th class="py-1.5 font-bold">النطاق السعري</th>
-                    <th class="py-1.5 font-bold text-center">الحجم ($)</th>
-                    <th class="py-1.5 font-bold text-left">غلبة الشراء</th>
-                  </tr>
-                </thead>
-                <tbody id="zonesTableBody" class="divide-y divide-slate-800/80"></tbody>
-              </table>
+            <!-- تحديد الفترة المخصصة -->
+            <div id="custom-period" class="custom-period hidden">
+
+                <div class="form-group">
+                    <label for="start-date">من التاريخ والوقت</label>
+                    <input type="datetime-local" id="start-date">
+                </div>
+
+                <div class="form-group">
+                    <label for="end-date">إلى التاريخ والوقت</label>
+                    <input type="datetime-local" id="end-date">
+                </div>
+
             </div>
-          </div>
 
-          <!-- أغلى الصفقات -->
-          <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 space-y-2">
-            <h3 class="text-xs font-extrabold text-sky-400">🔥 أغلى الصفقات المنفذة</h3>
-            <div class="overflow-x-auto">
-              <table class="w-full text-[11px] text-right border-collapse">
-                <thead>
-                  <tr class="text-gray-400 border-b border-slate-800">
-                    <th class="py-1.5 font-bold">القيمة</th>
-                    <th class="py-1.5 font-bold text-center">الكمية</th>
-                    <th class="py-1.5 font-bold text-center">السعر</th>
-                    <th class="py-1.5 font-bold text-left">النوع</th>
-                  </tr>
-                </thead>
-                <tbody id="highestTableBody" class="divide-y divide-slate-800/80"></tbody>
-              </table>
+            <button id="scan-btn" class="scan-button">
+                بدء فحص السوق
+            </button>
+
+        </section>
+
+
+        <!-- أدوات الرادار -->
+        <section class="radar-section">
+
+            <h2>أدوات الرادار</h2>
+
+            <div class="radar-grid">
+
+                <button class="radar-button" data-tool="chart">
+                    <span class="radar-icon">📊</span>
+                    <span>شارت TradingView</span>
+                </button>
+
+                <button class="radar-button" data-tool="large-trades">
+                    <span class="radar-icon">⚡</span>
+                    <span>الصفقات الضخمة</span>
+                </button>
+
+                <button class="radar-button" data-tool="hidden-orders">
+                    <span class="radar-icon">👁️</span>
+                    <span>أنماط الأوامر المخفية المحتملة</span>
+                </button>
+
+                <button class="radar-button" data-tool="execution-clusters">
+                    <span class="radar-icon">🧩</span>
+                    <span>تجمعات التنفيذ</span>
+                </button>
+
+                <button class="radar-button" data-tool="capital-footprint">
+                    <span class="radar-icon">🐋</span>
+                    <span>بصمة نشاط رأس المال الكبير</span>
+                </button>
+
+                <button class="radar-button" data-tool="buy-sell-activity">
+                    <span class="radar-icon">📈</span>
+                    <span>نشاط الشراء والبيع</span>
+                </button>
+
             </div>
-          </div>
 
-          <!-- الكميات المتكررة (فوق $500) -->
-          <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 space-y-2">
-            <div class="flex justify-between items-center">
-              <h3 class="text-xs font-extrabold text-purple-400">🔁 الكميات المتكررة (الكبار ≥ $500)</h3>
-            </div>
-            <div id="repeatedQtyList" class="space-y-1.5 text-xs"></div>
-          </div>
+        </section>
 
-          <!-- القيم المتكررة (فوق $500) -->
-          <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 space-y-2">
-            <div class="flex justify-between items-center">
-              <h3 class="text-xs font-extrabold text-teal-400">💵 القيم المتكررة (الكبار ≥ $500)</h3>
-            </div>
-            <div id="repeatedValList" class="space-y-1.5 text-xs"></div>
-          </div>
 
-          <!-- أقل الصفقات -->
-          <div class="bg-slate-900/90 rounded-xl p-3 border border-slate-800 space-y-2">
-            <h3 class="text-xs font-extrabold text-gray-400">🔹 أقل الصفقات المسجلة</h3>
-            <div id="lowestList" class="space-y-1.5 text-[11px] text-gray-300"></div>
-          </div>
+        <!-- مساحة عرض النتائج -->
+        <section id="results-section" class="results-section">
 
-        </div>
-      </div>
+        </section>
 
-    </div>
-  </div>
 
-  <script>
-    const allowedIds = ["8477440923", "7536915802", "8298463733"];
-    let tg = window.Telegram ? window.Telegram.WebApp : null;
-    let timeMode = "4"; // "1" | "4" | "12" | "custom"
-    let tvScriptLoaded = false;
-    let currentTvSymbol = "";
+        <!-- تذييل التطبيق -->
+        <footer class="app-footer">
+            WHALE RADAR
+            <span>Market Intelligence</span>
+        </footer>
 
-    window.addEventListener('DOMContentLoaded', () => {
-      if (tg) {
-        tg.expand();
-        const user = tg.initDataUnsafe && tg.initDataUnsafe.user;
-        if (user && user.id) {
-          if (!allowedIds.includes(user.id.toString())) {
-            document.getElementById('appContainer').classList.add('hidden');
-            document.getElementById('authLockCard').classList.remove('hidden');
-          }
-        }
-      }
-    });
+    </main>
 
-    function setMode(mode) {
-      timeMode = mode;
-      ["1", "4", "12", "custom"].forEach(m => document.getElementById(`m-${m}`).classList.remove('active'));
-      document.getElementById(`m-${mode}`).classList.add('active');
-      const box = document.getElementById('customRangeBox');
-      if (mode === "custom") box.classList.remove('hidden');
-      else box.classList.add('hidden');
-    }
+    <!-- منطق التطبيق -->
+    <script src="app.js"></script>
 
-    function getTimeWindow() {
-      const now = Date.now();
-      if (timeMode !== "custom") {
-        const hrs = Number(timeMode);
-        return {
-          startTime: now - hrs * 60 * 60 * 1000,
-          endTime: now,
-          label: `آخر ${hrs} ${hrs === 1 ? 'ساعة' : 'ساعات'}`,
-          maxBatches: hrs === 12 ? 35 : (hrs === 4 ? 22 : 12)
-        };
-      }
-
-      const startStr = document.getElementById('startTimeInput').value;
-      const endStr = document.getElementById('endTimeInput').value;
-      if (!startStr || !endStr) {
-        throw new Error("حدد وقت البداية ووقت النهاية (مثال: 12:30 إلى 15:45)");
-      }
-
-      const [sh, sm] = startStr.split(":").map(Number);
-      const [eh, em] = endStr.split(":").map(Number);
-
-      const dNow = new Date(now);
-      let startDate = new Date(dNow.getFullYear(), dNow.getMonth(), dNow.getDate(), sh, sm, 0, 0);
-      let endDate = new Date(dNow.getFullYear(), dNow.getMonth(), dNow.getDate(), eh, em, 59, 999);
-
-      // إذا وقت النهاية أصغر من وقت البداية، نعتبر الفترة تمتد لليوم التالي
-      if (endDate.getTime() <= startDate.getTime()) {
-        endDate.setDate(endDate.getDate() + 1);
-      }
-
-      // إذا وقت البداية في المستقبل بالنسبة للوقت الحالي، نرجعه ليوم أمس
-      if (startDate.getTime() > now && endDate.getTime() > now) {
-        startDate.setDate(startDate.getDate() - 1);
-        endDate.setDate(endDate.getDate() - 1);
-      }
-
-      const actualEnd = Math.min(now, endDate.getTime());
-      const actualStart = startDate.getTime();
-      if (actualStart >= actualEnd) {
-        throw new Error("الفترة المحددة غير صالحة أو لم تبدأ بعد");
-      }
-
-      const diffHours = Math.max(1, Math.ceil((actualEnd - actualStart) / (60 * 60 * 1000)));
-      return {
-        startTime: actualStart,
-        endTime: actualEnd,
-        label: `من ${startStr} إلى ${endStr}`,
-        maxBatches: Math.min(40, Math.max(12, diffHours * 5))
-      };
-    }
-
-    function toggleAccordion(key) {
-      const panel = document.getElementById(`panel-${key}`);
-      const chevron = document.getElementById(`chevron-${key}`);
-      const isHidden = panel.classList.contains('hidden');
-      if (isHidden) {
-        panel.classList.remove('hidden');
-        chevron.classList.add('open');
-        if (key === 'chart' && currentTvSymbol) {
-          mountTradingViewChart(currentTvSymbol);
-        }
-      } else {
-        panel.classList.add('hidden');
-        chevron.classList.remove('open');
-      }
-    }
-
-    function mountTradingViewChart(symbol) {
-      const container = document.getElementById('tv_chart_container');
-      const fullSymbol = `BINANCE:${symbol}`;
-      document.getElementById('chartPairBadge').innerText = fullSymbol;
-      container.innerHTML = "";
-
-      const initWidget = () => {
-        if (!window.TradingView) return;
-        new window.TradingView.widget({
-          autosize: true,
-          symbol: fullSymbol,
-          interval: "240",
-          timezone: "Asia/Riyadh",
-          theme: "dark",
-          style: "1",
-          locale: "ar",
-          enable_publishing: false,
-          hide_top_toolbar: false,
-          allow_symbol_change: true,
-          container_id: "tv_chart_container"
-        });
-      };
-
-      if (tvScriptLoaded && window.TradingView) {
-        initWidget();
-      } else {
-        const script = document.createElement("script");
-        script.src = "https://s3.tradingview.com/tv.js";
-        script.async = true;
-        script.onload = () => {
-          tvScriptLoaded = true;
-          initWidget();
-        };
-        document.head.appendChild(script);
-      }
-    }
-
-    function fmtPrice(p) {
-      if (p >= 100) return p.toFixed(2);
-      if (p >= 1) return p.toFixed(4);
-      if (p >= 0.01) return p.toFixed(5);
-      return p.toFixed(7);
-    }
-
-    function fmtNum(n) {
-      if (n >= 1000000) return (n / 1000000).toFixed(2) + "M";
-      if (n >= 1000) return (n / 1000).toFixed(1) + "K";
-      return n.toFixed(1);
-    }
-
-    async function runInspection() {
-      let rawSym = document.getElementById('symbol').value.trim().toUpperCase();
-      if (!rawSym) {
-        rawSym = "BMT";
-        document.getElementById('symbol').value = "BMT";
-      }
-      const symbol = rawSym.endsWith('USDT') ? rawSym : rawSym + 'USDT';
-      currentTvSymbol = symbol;
-
-      const scanBtn = document.getElementById('scanBtn');
-      const statusBox = document.getElementById('statusBox');
-      const statusText = document.getElementById('statusText');
-      const progressBar = document.getElementById('progressBar');
-      const accordionsWrapper = document.getElementById('accordionsWrapper');
-
-      scanBtn.disabled = true;
-      scanBtn.classList.add('opacity-60');
-      statusBox.classList.remove('hidden');
-      progressBar.style.width = "15%";
-      statusText.innerText = `جاري تجهيز فحص ${symbol}...`;
-
-      accordionsWrapper.classList.remove('hidden');
-      document.getElementById('chartPairBadge').innerText = `BINANCE:${symbol}`;
-      if (!document.getElementById('panel-chart').classList.contains('hidden')) {
-        mountTradingViewChart(symbol);
-      }
-
-      const endpoints = [
-        "https://data-api.binance.vision/api/v3/aggTrades",
-        "https://api.binance.com/api/v3/aggTrades"
-      ];
-
-      let activeBaseUrl = endpoints[0];
-      let trades = [];
-      let fromId = null;
-
-      try {
-        const win = getTimeWindow();
-        const { startTime, endTime, label, maxBatches } = win;
-
-        for (let b = 1; b <= maxBatches; b++) {
-          const pct = Math.min(92, 15 + Math.round((b / maxBatches) * 77));
-          progressBar.style.width = pct + "%";
-          statusText.innerText = `جاري سحب الصفقات (${trades.length.toLocaleString()})...`;
-
-          const buildUrl = (base) => fromId !== null
-            ? `${base}?symbol=${symbol}&limit=1000&fromId=${fromId}`
-            : `${base}?symbol=${symbol}&limit=1000&startTime=${startTime}&endTime=${endTime}`;
-
-          let res;
-          try {
-            res = await fetch(buildUrl(activeBaseUrl));
-            if (!res.ok && b === 1 && activeBaseUrl !== endpoints[1]) {
-              activeBaseUrl = endpoints[1];
-              res = await fetch(buildUrl(activeBaseUrl));
-            }
-          } catch (netErr) {
-            if (b === 1 && activeBaseUrl !== endpoints[1]) {
-              activeBaseUrl = endpoints[1];
-              res = await fetch(buildUrl(activeBaseUrl));
-            } else {
-              throw netErr;
-            }
-          }
-
-          if (!res || !res.ok) {
-            throw new Error(`تعذر جلب البيانات (${res ? res.status : 'بدون اتصال'}) للرمز ${symbol}`);
-          }
-
-          const data = await res.json();
-          if (!Array.isArray(data) || data.length === 0) break;
-
-          let passedEndTime = false;
-          for (const t of data) {
-            if (t.T > endTime) {
-              passedEndTime = true;
-              break;
-            }
-            if (t.T >= startTime && t.T <= endTime) {
-              const p = parseFloat(t.p);
-              const q = parseFloat(t.q);
-              trades.push({
-                p,
-                q,
-                val: p * q,
-                isMarketBuy: !t.m,
-                t: t.T
-              });
-            }
-          }
-
-          const last = data[data.length - 1];
-          if (passedEndTime || last.T >= endTime || data.length < 1000) break;
-          fromId = last.a + 1;
-          await new Promise(r => setTimeout(r, 70));
-        }
-
-        populateWhaleData(symbol, trades, label);
-        progressBar.style.width = "100%";
-        statusText.innerText = "اكتمل الفحص ✅";
-
-      } catch (err) {
-        statusText.innerText = "تعذر إتمام الفحص ❌";
-        document.getElementById('panel-data').classList.remove('hidden');
-        document.getElementById('chevron-data').classList.add('open');
-        document.getElementById('tradesCountBadge').innerText = "تنبيه";
-        document.getElementById('zonesTableBody').innerHTML =
-          `<tr><td colspan="3" class="py-3 text-center text-rose-400 font-bold">${err.message || "خطأ في الاتصال"}</td></tr>`;
-      } finally {
-        scanBtn.disabled = false;
-        scanBtn.classList.remove('opacity-60');
-        setTimeout(() => statusBox.classList.add('hidden'), 1200);
-      }
-    }
-
-    function populateWhaleData(symbol, trades, label) {
-      document.getElementById('tradesCountBadge').innerText = `${trades.length.toLocaleString()} صفقة`;
-      document.getElementById('periodLabel').innerText = `${label} (${symbol})`;
-
-      if (!trades.length) {
-        document.getElementById('mBuyVol').innerText = "$0";
-        document.getElementById('mSellVol').innerText = "$0";
-        document.getElementById('mBuyCnt').innerText = "0 صفقة";
-        document.getElementById('mSellCnt').innerText = "0 صفقة";
-        document.getElementById('netDeltaVal').innerText = "$0";
-        document.getElementById('zonesTableBody').innerHTML = '<tr><td colspan="3" class="py-3 text-center text-gray-500">لا توجد صفقات في هذه الفترة</td></tr>';
-        document.getElementById('highestTableBody').innerHTML = '<tr><td colspan="4" class="py-3 text-center text-gray-500">لا توجد بيانات</td></tr>';
-        document.getElementById('repeatedQtyList').innerHTML = '<div class="text-gray-500 text-center py-1">لا يوجد تكرار لصفقات ≥ $500</div>';
-        document.getElementById('repeatedValList').innerHTML = '<div class="text-gray-500 text-center py-1">لا يوجد تكرار لصفقات ≥ $500</div>';
-        document.getElementById('lowestList').innerHTML = '<div class="text-gray-500 text-center py-1">لا توجد بيانات</div>';
-        return;
-      }
-
-      let mBuyVol = 0, mSellVol = 0, mBuyCnt = 0, mSellCnt = 0;
-      let minP = Infinity, maxP = -Infinity;
-
-      for (const tr of trades) {
-        if (tr.p < minP) minP = tr.p;
-        if (tr.p > maxP) maxP = tr.p;
-        if (tr.isMarketBuy) { mBuyVol += tr.val; mBuyCnt++; }
-        else { mSellVol += tr.val; mSellCnt++; }
-      }
-
-      document.getElementById('mBuyVol').innerText = `$${fmtNum(mBuyVol)}`;
-      document.getElementById('mBuyCnt').innerText = `${mBuyCnt.toLocaleString()} صفقة`;
-      document.getElementById('mSellVol').innerText = `$${fmtNum(mSellVol)}`;
-      document.getElementById('mSellCnt').innerText = `${mSellCnt.toLocaleString()} صفقة`;
-
-      const delta = mBuyVol - mSellVol;
-      const deltaEl = document.getElementById('netDeltaVal');
-      deltaEl.innerText = delta >= 0 ? `+$${fmtNum(delta)}` : `-$${fmtNum(Math.abs(delta))}`;
-      deltaEl.className = `font-extrabold dir-ltr ${delta >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
-
-      // تمركز الطلبات
-      const range = (maxP - minP) || (maxP * 0.005);
-      const step = range / 8;
-      const zones = {};
-      for (const tr of trades) {
-        const idx = Math.min(7, Math.floor((tr.p - minP) / step));
-        const zLow = minP + idx * step;
-        const zHigh = zLow + step;
-        const key = `${fmtPrice(zLow)} - ${fmtPrice(zHigh)}`;
-        if (!zones[key]) zones[key] = { key, total: 0, buy: 0 };
-        zones[key].total += tr.val;
-        if (tr.isMarketBuy) zones[key].buy += tr.val;
-      }
-      const topZones = Object.values(zones).sort((a, b) => b.total - a.total).slice(0, 5);
-      document.getElementById('zonesTableBody').innerHTML = topZones.map(z => {
-        const pct = Math.round((z.buy / (z.total || 1)) * 100);
-        const color = pct >= 55 ? 'text-emerald-400' : (pct <= 45 ? 'text-rose-400' : 'text-amber-300');
-        return `
-          <tr>
-            <td class="py-2 dir-ltr text-right font-mono text-[10px] text-gray-200">${z.key}</td>
-            <td class="py-2 text-center font-bold text-white dir-ltr">$${fmtNum(z.total)}</td>
-            <td class="py-2 text-left font-extrabold ${color}">${pct}%</td>
-          </tr>`;
-      }).join('');
-
-      // أغلى الصفقات
-      const sorted = [...trades].sort((a, b) => b.val - a.val);
-      const highest = sorted.slice(0, 6);
-      document.getElementById('highestTableBody').innerHTML = highest.map(x => `
-        <tr>
-          <td class="py-2 font-extrabold text-white dir-ltr text-right">$${x.val.toFixed(1)}</td>
-          <td class="py-2 text-center text-gray-300 dir-ltr">${fmtNum(x.q)}</td>
-          <td class="py-2 text-center text-gray-300 dir-ltr font-mono text-[10px]">${fmtPrice(x.p)}</td>
-          <td class="py-2 text-left font-bold ${x.isMarketBuy ? 'text-emerald-400' : 'text-rose-400'}">
-            ${x.isMarketBuy ? '🟢 شراء سوق' : '🔴 بيع سوق'}
-          </td>
-        </tr>`).join('');
-
-      // أقل الصفقات
-      const lowest = sorted.slice(-5).reverse();
-      document.getElementById('lowestList').innerHTML = lowest.map(x => `
-        <div class="flex justify-between items-center bg-slate-950/80 px-2.5 py-1.5 rounded-lg border border-slate-800">
-          <span class="dir-ltr font-bold text-gray-200">$${x.val.toFixed(3)} <span class="text-gray-500">(${x.q})</span></span>
-          <span class="${x.isMarketBuy ? 'text-emerald-400' : 'text-rose-400'} font-bold">${x.isMarketBuy ? 'شراء سوق' : 'بيع سوق'}</span>
-        </div>`).join('');
-
-      // الكميات والقيم المتكررة — للكبار فقط (>= $500)
-      const MIN_WHALE_VAL = 500;
-      const qtyMap = {};
-      const valMap = {};
-      for (const tr of trades) {
-        if (tr.val >= MIN_WHALE_VAL) {
-          qtyMap[tr.q] = (qtyMap[tr.q] || 0) + 1;
-          const bucket = Math.round(tr.val / 100) * 100;
-          valMap[bucket] = (valMap[bucket] || 0) + 1;
-        }
-      }
-
-      const repQty = Object.entries(qtyMap).map(([q, c]) => ({ q, c })).filter(x => x.c > 1).sort((a, b) => b.c - a.c).slice(0, 6);
-      document.getElementById('repeatedQtyList').innerHTML = repQty.length
-        ? repQty.map(x => `
-            <div class="flex justify-between items-center bg-slate-950/80 px-3 py-2 rounded-lg border border-slate-800">
-              <span class="text-gray-200 font-bold dir-ltr">كمية: ${x.q}</span>
-              <span class="bg-purple-500/20 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded-full text-[11px] font-bold">تكررت ${x.c} مرة</span>
-            </div>`).join('')
-        : '<div class="text-gray-500 text-center py-1">لا يوجد تكرار كميات في صفقات ≥ $500</div>';
-
-      const repVal = Object.entries(valMap).map(([v, c]) => ({ v, c })).filter(x => x.c > 1).sort((a, b) => b.c - a.c).slice(0, 6);
-      document.getElementById('repeatedValList').innerHTML = repVal.length
-        ? repVal.map(x => `
-            <div class="flex justify-between items-center bg-slate-950/80 px-3 py-2 rounded-lg border border-slate-800">
-              <span class="text-gray-200 font-bold dir-ltr">~$${Number(x.v).toLocaleString()}</span>
-              <span class="bg-teal-500/20 text-teal-300 border border-teal-500/30 px-2 py-0.5 rounded-full text-[11px] font-bold">تكرر ${x.c} مرة</span>
-            </div>`).join('')
-        : '<div class="text-gray-500 text-center py-1">لا يوجد تكرار قيم في صفقات ≥ $500</div>';
-    }
-  </script>
 </body>
 </html>
