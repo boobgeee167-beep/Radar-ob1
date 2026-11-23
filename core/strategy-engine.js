@@ -1,22 +1,16 @@
 
 /**
  * WHALE RADAR
- * STRATEGY INTELLIGENCE ENGINE
+ * WHALE & INSTITUTIONAL INTELLIGENCE ENGINE
  *
- * المحلل الاستراتيجي لبصمة رأس المال وسلوك التنفيذ.
+ * الهدف:
+ * رصد بصمة رأس المال الكبير حول منطقة الدخول،
+ * وتحديد مدى توافقها مع اتجاه الصفقة.
  *
+ * يعتمد حصراً على Binance Spot aggTrades التاريخية.
  * لا يجمع بيانات جديدة ولا يستخدم السعر اللحظي.
- * يعتمد حصراً على صفقات Binance Spot التاريخية التي يجلبها market-data.js.
  *
- * طبقات التحليل:
- * 1. البصمة العامة خلال الفترة.
- * 2. ممر الوصول إلى منطقة الدخول.
- * 3. التداولات داخل منطقة الدخول.
- * 4. استجابة السعر للمبادرة الشرائية والبيعية.
- *
- * تنبيه:
- * البيانات العامة لا تكشف هوية المتداول أو مالك الأوامر.
- * لذلك نصف الأنماط المرصودة ولا نجزم بأنها تعود إلى صندوق أو حوت بعينه.
+ * لا يدّعي معرفة هوية الحيتان أو الصناديق.
  */
 
 import { fetchMarketData } from "./market-data.js";
@@ -24,8 +18,9 @@ import { fetchMarketData } from "./market-data.js";
 const CONFIG = {
     MIN_ZONE_TRADES: 10,
     MIN_LARGE_TRADES: 3,
+    MIN_CAPITAL_TRADES: 3,
     MIN_CLUSTER_TRADES: 5,
-    MIN_ACTIVITY_WINDOWS: 2,
+    MIN_CLUSTER_WINDOWS: 2,
 
     LARGE_TRADE_PERCENTILE: 95,
     CAPITAL_PERCENTILE: 90,
@@ -34,17 +29,15 @@ const CONFIG = {
     ACTIVITY_WINDOW_MS: 60 * 1000,
 
     DIRECTIONAL_THRESHOLD: 0.15,
+    STRONG_DIRECTION_THRESHOLD: 0.35,
     FLAT_RETURN_PCT: 0.03,
-
-    APPROACH_DISTANCE: 0.03,
-    BOUNDARY_TOLERANCE: 0.001,
 
     PRICE_BUCKETS: 12
 };
 
-/* =========================================================
-   أدوات حسابية عامة
-========================================================= */
+/* =====================================================
+   أدوات حسابية
+===================================================== */
 
 const sum = values =>
     values.reduce((total, value) => total + (Number(value) || 0), 0);
@@ -52,31 +45,20 @@ const sum = values =>
 const average = values =>
     values.length ? sum(values) / values.length : 0;
 
-const median = values => {
-    if (!values.length) return 0;
-
-    const sorted = [...values].sort((a, b) => a - b);
-    const middle = Math.floor(sorted.length / 2);
-
-    return sorted.length % 2
-        ? sorted[middle]
-        : (sorted[middle - 1] + sorted[middle]) / 2;
-};
-
 const percentile = (values, percent) => {
     if (!values.length) return 0;
 
     const sorted = [...values].sort((a, b) => a - b);
+
     const index = Math.min(
         sorted.length - 1,
-        Math.max(0, Math.ceil((percent / 100) * sorted.length) - 1)
+        Math.max(0, Math.ceil(percent / 100 * sorted.length) - 1)
     );
 
     return sorted[index];
 };
 
-const safeRatio = (a, b) =>
-    b > 0 ? a / b : 0;
+const safeRatio = (a, b) => b > 0 ? a / b : 0;
 
 const round = (value, digits = 2) => {
     if (!Number.isFinite(Number(value))) return 0;
@@ -94,21 +76,27 @@ const formatMoney = value =>
     "$" + formatNumber(value, 2);
 
 const formatPercent = value =>
-    (value > 0 ? "+" : "") + formatNumber(value, 3) + "%";
+    (value > 0 ? "+" : "") + formatNumber(value, 2) + "%";
 
 const getSide = trade =>
     trade.buyerIsMaker ? "sell" : "buy";
 
-const getFlow = trades => {
+/*
+ * buyerIsMaker = true:
+ * البائع هو الطرف المبادر.
+ *
+ * buyerIsMaker = false:
+ * المشتري هو الطرف المبادر.
+ */
+
+function getFlow(trades) {
     let buyValue = 0;
     let sellValue = 0;
     let buyCount = 0;
     let sellCount = 0;
 
     for (const trade of trades) {
-        const side = getSide(trade);
-
-        if (side === "buy") {
+        if (getSide(trade) === "buy") {
             buyValue += trade.value;
             buyCount++;
         } else {
@@ -118,15 +106,14 @@ const getFlow = trades => {
     }
 
     const totalValue = buyValue + sellValue;
-    const totalCount = buyCount + sellCount;
 
     return {
         buyValue,
         sellValue,
-        totalValue,
         buyCount,
         sellCount,
-        totalCount,
+        totalCount: buyCount + sellCount,
+        totalValue,
         buyRatio: safeRatio(buyValue, totalValue),
         sellRatio: safeRatio(sellValue, totalValue),
         imbalance: safeRatio(
@@ -134,11 +121,11 @@ const getFlow = trades => {
             totalValue
         )
     };
-};
+}
 
-/* =========================================================
-   تجهيز البيانات والتحقق منها
-========================================================= */
+/* =====================================================
+   تجهيز البيانات
+===================================================== */
 
 function validateTrades(rawTrades) {
     if (!Array.isArray(rawTrades)) return [];
@@ -147,18 +134,14 @@ function validateTrades(rawTrades) {
         .map(trade => {
             const price = Number(trade.price);
             const quantity = Number(trade.quantity);
-            const value = Number(
-                trade.value || price * quantity
-            );
-
-            const time = Number(trade.time);
+            const value = Number(trade.value || price * quantity);
 
             return {
                 ...trade,
                 price,
                 quantity,
                 value,
-                time
+                time: Number(trade.time)
             };
         })
         .filter(trade =>
@@ -174,15 +157,12 @@ function validateTrades(rawTrades) {
 }
 
 function getReferencePrice(trades) {
-    return trades.length
-        ? trades[trades.length - 1].price
-        : 0;
+    return trades.length ? trades[trades.length - 1].price : 0;
 }
 
-function getPriceChange(firstPrice, lastPrice) {
-    if (!firstPrice || !lastPrice) return 0;
-
-    return ((lastPrice - firstPrice) / firstPrice) * 100;
+function getPriceChange(first, last) {
+    if (!first || !last) return 0;
+    return (last - first) / first * 100;
 }
 
 function getTradeRange(trades) {
@@ -199,9 +179,9 @@ function getTradeRange(trades) {
         };
     }
 
-    const prices = trades.map(trade => trade.price);
     const first = trades[0];
     const last = trades[trades.length - 1];
+    const prices = trades.map(item => item.price);
 
     return {
         count: trades.length,
@@ -215,9 +195,9 @@ function getTradeRange(trades) {
     };
 }
 
-/* =========================================================
-   تحديد موقع السعر بالنسبة إلى منطقة الدخول
-========================================================= */
+/* =====================================================
+   منطقة الدخول وموقع السعر
+===================================================== */
 
 function analyzeZonePosition(referencePrice, upper, lower) {
     if (!referencePrice || !upper || !lower) {
@@ -225,33 +205,29 @@ function analyzeZonePosition(referencePrice, upper, lower) {
             position: "unknown",
             inside: false,
             distancePct: 0,
-            description: "تعذر تحديد موقع السعر بالنسبة إلى المنطقة"
+            description: "تعذر تحديد موقع السعر"
         };
     }
 
     if (referencePrice > upper) {
-        const distancePct =
-            ((referencePrice - upper) / upper) * 100;
+        const distancePct = (referencePrice - upper) / upper * 100;
 
         return {
             position: "above",
             inside: false,
             distancePct,
-            description:
-                `السعر المرجعي أعلى المنطقة بنسبة ${formatNumber(distancePct, 3)}%`
+            description: `السعر أعلى المنطقة بنسبة ${formatNumber(distancePct, 3)}%`
         };
     }
 
     if (referencePrice < lower) {
-        const distancePct =
-            ((lower - referencePrice) / lower) * 100;
+        const distancePct = (lower - referencePrice) / lower * 100;
 
         return {
             position: "below",
             inside: false,
             distancePct,
-            description:
-                `السعر المرجعي أسفل المنطقة بنسبة ${formatNumber(distancePct, 3)}%`
+            description: `السعر أسفل المنطقة بنسبة ${formatNumber(distancePct, 3)}%`
         };
     }
 
@@ -259,7 +235,7 @@ function analyzeZonePosition(referencePrice, upper, lower) {
         position: "inside",
         inside: true,
         distancePct: 0,
-        description: "السعر المرجعي داخل حدود منطقة الدخول"
+        description: "السعر المرجعي داخل منطقة الدخول"
     };
 }
 
@@ -267,22 +243,8 @@ function insideZone(trade, upper, lower) {
     return trade.price >= lower && trade.price <= upper;
 }
 
-/*
- * ممر الوصول:
- * نأخذ التداولات الواقعة بين السعر المرجعي والمنطقة،
- * ولا نعامل كل حركة تاريخية في هذا النطاق كرحلة متصلة.
- */
-function getApproachTrades(
-    trades,
-    referencePrice,
-    upper,
-    lower
-) {
+function getApproachTrades(trades, referencePrice, upper, lower) {
     if (!trades.length || !referencePrice) return [];
-
-    const zoneTrades = trades.filter(trade =>
-        insideZone(trade, upper, lower)
-    );
 
     if (referencePrice > upper) {
         return trades.filter(trade =>
@@ -298,12 +260,14 @@ function getApproachTrades(
         );
     }
 
-    return zoneTrades;
+    return trades.filter(trade =>
+        insideZone(trade, upper, lower)
+    );
 }
 
-/* =========================================================
-   بناء النوافذ الزمنية واستجابة السعر
-========================================================= */
+/* =====================================================
+   النوافذ الزمنية
+===================================================== */
 
 function buildTimeWindows(trades, windowMs = CONFIG.ACTIVITY_WINDOW_MS) {
     const buckets = new Map();
@@ -328,8 +292,8 @@ function buildTimeWindows(trades, windowMs = CONFIG.ACTIVITY_WINDOW_MS) {
         }
 
         const bucket = buckets.get(start);
-        bucket.trades.push(trade);
 
+        bucket.trades.push(trade);
         bucket.lastPrice = trade.price;
         bucket.high = Math.max(bucket.high, trade.price);
         bucket.low = Math.min(bucket.low, trade.price);
@@ -346,16 +310,12 @@ function buildTimeWindows(trades, windowMs = CONFIG.ACTIVITY_WINDOW_MS) {
     return [...buckets.values()]
         .sort((a, b) => a.startTime - b.startTime)
         .map(bucket => {
-            const totalValue =
-                bucket.buyValue + bucket.sellValue;
-
-            const totalCount =
-                bucket.buyCount + bucket.sellCount;
+            const totalValue = bucket.buyValue + bucket.sellValue;
 
             return {
                 ...bucket,
                 totalValue,
-                totalCount,
+                totalCount: bucket.buyCount + bucket.sellCount,
                 imbalance: safeRatio(
                     bucket.buyValue - bucket.sellValue,
                     totalValue
@@ -367,6 +327,10 @@ function buildTimeWindows(trades, windowMs = CONFIG.ACTIVITY_WINDOW_MS) {
             };
         });
 }
+
+/* =====================================================
+   استجابة السعر
+===================================================== */
 
 function analyzePriceResponse(trades) {
     const windows = buildTimeWindows(trades);
@@ -385,31 +349,20 @@ function analyzePriceResponse(trades) {
             window.priceChangePct < -CONFIG.FLAT_RETURN_PCT;
 
         let behavior = "balanced";
-        let interpretation =
-            "لم يظهر تفوق واضح لأحد الطرفين أو استجابة سعرية حاسمة";
 
         if (buyDominant && priceUp) {
             behavior = "effective_buy_pressure";
-            interpretation =
-                "مبادرة شرائية صاحَبها ارتفاع سعري؛ الشراء كان ذا أثر سعري ظاهر";
         } else if (sellDominant && priceDown) {
             behavior = "effective_sell_pressure";
-            interpretation =
-                "مبادرة بيعية صاحَبها انخفاض سعري؛ البيع كان ذا أثر سعري ظاهر";
         } else if (buyDominant && !priceUp) {
             behavior = "possible_supply_response";
-            interpretation =
-                "مبادرة شرائية دون ارتفاع سعري متناسب؛ يتوافق ذلك مع احتمال وجود عرض مقابل أو امتصاص للشراء";
         } else if (sellDominant && !priceDown) {
             behavior = "possible_demand_response";
-            interpretation =
-                "مبادرة بيعية دون انخفاض سعري متناسب؛ يتوافق ذلك مع احتمال وجود طلب مقابل أو امتصاص للبيع";
         }
 
         return {
             ...window,
-            behavior,
-            interpretation
+            behavior
         };
     });
 
@@ -435,14 +388,12 @@ function analyzePriceResponse(trades) {
         ).length
     };
 
-    const meaningful = analyzed.filter(item =>
-        item.behavior !== "balanced"
-    );
-
     return {
         windows: analyzed,
         totalWindows: analyzed.length,
-        meaningfulWindows: meaningful.length,
+        meaningfulWindows: analyzed.filter(
+            item => item.behavior !== "balanced"
+        ).length,
         behaviorCounts,
         recent: analyzed.slice(-10),
         summary: buildResponseSummary(behaviorCounts)
@@ -450,102 +401,83 @@ function analyzePriceResponse(trades) {
 }
 
 function buildResponseSummary(counts) {
-    const buyImpact =
-        counts.effectiveBuy + counts.possibleSupply;
-
-    const sellImpact =
-        counts.effectiveSell + counts.possibleDemand;
-
-    if (!buyImpact && !sellImpact) {
-        return "العلاقة بين المبادرة واتجاه السعر غير حاسمة في النوافذ المرصودة.";
+    if (
+        !counts.effectiveBuy &&
+        !counts.effectiveSell &&
+        !counts.possibleDemand &&
+        !counts.possibleSupply
+    ) {
+        return "لا توجد استجابة سعرية حاسمة في النوافذ المرصودة.";
     }
 
     if (
-        counts.possibleDemand >
-        counts.effectiveSell &&
-        counts.possibleDemand >= 2
+        counts.possibleDemand >= 2 &&
+        counts.possibleDemand > counts.effectiveSell
     ) {
-        return "ظهرت عدة نوافذ شهدت مبادرة بيعية دون استجابة هبوطية متناسبة؛ هذه قرينة تتوافق مع وجود طلب مقابل، لكنها لا تثبت الامتصاص.";
+        return "تكرر البيع المبادر دون هبوط متناسب؛ قرينة محتملة على وجود طلب مقابل.";
     }
 
     if (
-        counts.possibleSupply >
-        counts.effectiveBuy &&
-        counts.possibleSupply >= 2
+        counts.possibleSupply >= 2 &&
+        counts.possibleSupply > counts.effectiveBuy
     ) {
-        return "ظهرت عدة نوافذ شهدت مبادرة شرائية دون استجابة صعودية متناسبة؛ هذه قرينة تتوافق مع وجود عرض مقابل، لكنها لا تثبت الامتصاص.";
+        return "تكرر الشراء المبادر دون صعود متناسب؛ قرينة محتملة على وجود عرض مقابل.";
     }
 
     if (counts.effectiveBuy > counts.effectiveSell) {
-        return "الأثر السعري للمبادرة الشرائية كان أوضح من الأثر السعري للمبادرة البيعية.";
+        return "الأثر السعري للشراء المبادر كان أوضح.";
     }
 
     if (counts.effectiveSell > counts.effectiveBuy) {
-        return "الأثر السعري للمبادرة البيعية كان أوضح من الأثر السعري للمبادرة الشرائية.";
+        return "الأثر السعري للبيع المبادر كان أوضح.";
     }
 
-    return "توجد استجابات سعرية مختلفة، ولا يظهر نمط واحد مهيمن بوضوح.";
+    return "استجابة السعر مختلطة وغير حاسمة.";
 }
 
-/* =========================================================
-   تحليل الصفقات الكبيرة
-   يستخدم عتبة واحدة محسوبة من كامل الفترة.
-========================================================= */
+/* =====================================================
+   الصفقات الكبيرة
+===================================================== */
 
 function getLargeTradeThreshold(trades) {
-    const values = trades.map(trade => trade.value);
-
-    if (!values.length) return 0;
-
     return percentile(
-        values,
+        trades.map(trade => trade.value),
         CONFIG.LARGE_TRADE_PERCENTILE
     );
 }
 
 function analyzeLargeTrades(trades, threshold) {
-    const largeTrades = trades.filter(
-        trade => trade.value >= threshold && threshold > 0
+    const selected = trades.filter(
+        trade => threshold > 0 && trade.value >= threshold
     );
 
-    const flow = getFlow(largeTrades);
-    const totalValue = sum(largeTrades.map(trade => trade.value));
-
-    const buyLarge = largeTrades.filter(
-        trade => getSide(trade) === "buy"
-    );
-
-    const sellLarge = largeTrades.filter(
-        trade => getSide(trade) === "sell"
-    );
+    const flow = getFlow(selected);
 
     return {
         threshold,
-        count: largeTrades.length,
-        totalValue,
-        averageValue: average(
-            largeTrades.map(trade => trade.value)
-        ),
-        largestTrade: largeTrades.length
-            ? Math.max(...largeTrades.map(trade => trade.value))
+        count: selected.length,
+        totalValue: flow.totalValue,
+        averageValue: average(selected.map(item => item.value)),
+        largestTrade: selected.length
+            ? Math.max(...selected.map(item => item.value))
             : 0,
-        buyCount: buyLarge.length,
-        sellCount: sellLarge.length,
+        buyCount: flow.buyCount,
+        sellCount: flow.sellCount,
         buyValue: flow.buyValue,
         sellValue: flow.sellValue,
         buyRatio: flow.buyRatio,
         sellRatio: flow.sellRatio,
         imbalance: flow.imbalance,
-        trades: largeTrades.slice(-20),
-        status: largeTrades.length >= CONFIG.MIN_LARGE_TRADES
+        trades: selected.slice(-20),
+        status: selected.length >= CONFIG.MIN_LARGE_TRADES
             ? "sufficient"
             : "limited"
     };
 }
 
-/* =========================================================
-   تحليل عناقيد التنفيذ
-========================================================= */
+/* =====================================================
+   عناقيد التنفيذ
+===================================================== */
 
 function analyzeClusters(trades) {
     const windows = buildTimeWindows(
@@ -558,20 +490,15 @@ function analyzeClusters(trades) {
     );
 
     const buyClusters = clusters.filter(
-        cluster => cluster.buyValue > cluster.sellValue
+        item => item.imbalance >= CONFIG.DIRECTIONAL_THRESHOLD
     );
 
     const sellClusters = clusters.filter(
-        cluster => cluster.sellValue > cluster.buyValue
+        item => item.imbalance <= -CONFIG.DIRECTIONAL_THRESHOLD
     );
 
-    const buyValue = sum(
-        clusters.map(cluster => cluster.buyValue)
-    );
-
-    const sellValue = sum(
-        clusters.map(cluster => cluster.sellValue)
-    );
+    const buyValue = sum(clusters.map(item => item.buyValue));
+    const sellValue = sum(clusters.map(item => item.sellValue));
 
     return {
         count: clusters.length,
@@ -589,16 +516,15 @@ function analyzeClusters(trades) {
             ? Math.max(...clusters.map(item => item.totalValue))
             : 0,
         clusters: clusters.slice(-20),
-        status: clusters.length >= CONFIG.MIN_ACTIVITY_WINDOWS
+        status: clusters.length >= CONFIG.MIN_CLUSTER_WINDOWS
             ? "sufficient"
             : "limited"
     };
 }
 
-/* =========================================================
+/* =====================================================
    بصمة رأس المال
-   عتبة أعلى 10% تحسب من كامل الفترة ثم تطبق على كل طبقة.
-========================================================= */
+===================================================== */
 
 function getCapitalThreshold(trades) {
     return percentile(
@@ -608,38 +534,26 @@ function getCapitalThreshold(trades) {
 }
 
 function analyzeCapital(trades, threshold) {
-    const capitalTrades = trades.filter(
-        trade => trade.value >= threshold && threshold > 0
+    const selected = trades.filter(
+        trade => threshold > 0 && trade.value >= threshold
     );
 
-    const flow = getFlow(capitalTrades);
-
-    const buyTrades = capitalTrades.filter(
-        trade => getSide(trade) === "buy"
-    );
-
-    const sellTrades = capitalTrades.filter(
-        trade => getSide(trade) === "sell"
-    );
-
-    const prices = capitalTrades.map(
-        trade => trade.price
-    );
+    const flow = getFlow(selected);
+    const prices = selected.map(item => item.price);
 
     let concentration = [];
 
-    if (capitalTrades.length && prices.length) {
+    if (prices.length) {
         const minPrice = Math.min(...prices);
         const maxPrice = Math.max(...prices);
         const spread = maxPrice - minPrice;
-
         const bucketSize = spread > 0
             ? spread / CONFIG.PRICE_BUCKETS
             : 1;
 
         const buckets = new Map();
 
-        for (const trade of capitalTrades) {
+        for (const trade of selected) {
             const index = spread > 0
                 ? Math.min(
                     CONFIG.PRICE_BUCKETS - 1,
@@ -683,78 +597,66 @@ function analyzeCapital(trades, threshold) {
 
     return {
         threshold,
-        count: capitalTrades.length,
+        count: selected.length,
         totalValue: flow.totalValue,
-        buyCount: buyTrades.length,
-        sellCount: sellTrades.length,
+        buyCount: flow.buyCount,
+        sellCount: flow.sellCount,
         buyValue: flow.buyValue,
         sellValue: flow.sellValue,
         buyRatio: flow.buyRatio,
         sellRatio: flow.sellRatio,
         imbalance: flow.imbalance,
-        averageValue: average(
-            capitalTrades.map(trade => trade.value)
-        ),
-        largestTrade: capitalTrades.length
-            ? Math.max(...capitalTrades.map(trade => trade.value))
+        averageValue: average(selected.map(item => item.value)),
+        largestTrade: selected.length
+            ? Math.max(...selected.map(item => item.value))
             : 0,
         concentration: concentration.slice(0, 10),
-        status: capitalTrades.length >= CONFIG.MIN_CAPITAL_TRADES
+        status: selected.length >= CONFIG.MIN_CAPITAL_TRADES
             ? "sufficient"
             : "limited"
     };
 }
 
-/* =========================================================
+/* =====================================================
    نشاط الشراء والبيع
-========================================================= */
+===================================================== */
 
 function analyzeActivity(trades) {
     const flow = getFlow(trades);
+
     const windows = buildTimeWindows(
         trades,
         CONFIG.ACTIVITY_WINDOW_MS
     );
 
-    const activeWindows = windows.filter(
-        window => window.totalCount > 0
+    const buyDominantWindows = windows.filter(
+        item => item.imbalance >= CONFIG.DIRECTIONAL_THRESHOLD
     );
 
-    const buyDominantWindows = activeWindows.filter(
-        window => window.imbalance >= CONFIG.DIRECTIONAL_THRESHOLD
-    );
-
-    const sellDominantWindows = activeWindows.filter(
-        window => window.imbalance <= -CONFIG.DIRECTIONAL_THRESHOLD
+    const sellDominantWindows = windows.filter(
+        item => item.imbalance <= -CONFIG.DIRECTIONAL_THRESHOLD
     );
 
     return {
         ...flow,
-        activeWindows: activeWindows.length,
+        activeWindows: windows.length,
         buyDominantWindows: buyDominantWindows.length,
         sellDominantWindows: sellDominantWindows.length,
-        windows: activeWindows.slice(-20),
-        status: activeWindows.length >= CONFIG.MIN_ACTIVITY_WINDOWS
+        windows: windows.slice(-20),
+        status: windows.length >= CONFIG.MIN_ACTIVITY_WINDOWS
             ? "sufficient"
             : "limited"
     };
 }
 
-/* =========================================================
-   تحليل طبقة واحدة من السوق
-========================================================= */
+/* =====================================================
+   تحليل طبقة
+===================================================== */
 
-function analyzeLayer(
-    trades,
-    thresholds,
-    includeResponse = true
-) {
-    const range = getTradeRange(trades);
-    const flow = getFlow(trades);
-
+function analyzeLayer(trades, thresholds) {
     return {
-        range,
-        flow,
+        range: getTradeRange(trades),
+        flow: getFlow(trades),
         largeTrades: analyzeLargeTrades(
             trades,
             thresholds.large
@@ -765,143 +667,265 @@ function analyzeLayer(
             thresholds.capital
         ),
         activity: analyzeActivity(trades),
-        priceResponse: includeResponse
-            ? analyzePriceResponse(trades)
-            : null
+        priceResponse: analyzePriceResponse(trades)
     };
 }
 
-/* =========================================================
-   تفسير البصمة المؤسسية المحتملة
-========================================================= */
+/* =====================================================
+   اتجاه البصمة المؤسسية
+===================================================== */
 
-function interpretFootprint(layer, label) {
-    const findings = [];
+function getAlignedImbalance(imbalance, direction) {
+    return direction === "long" ? imbalance : -imbalance;
+}
 
+function analyzeInstitutionalFootprint(layer, direction) {
     const large = layer.largeTrades;
     const capital = layer.capital;
     const clusters = layer.clusters;
-    const response = layer.priceResponse;
 
-    if (large.count) {
-        const side = large.imbalance > 0.15
-            ? "الشراء"
-            : large.imbalance < -0.15
-                ? "البيع"
-                : "الجانبين";
+    const largeAligned = getAlignedImbalance(
+        large.imbalance,
+        direction
+    );
 
-        findings.push({
-            name: `${label}: الصفقات الكبيرة`,
-            status: large.count >= CONFIG.MIN_LARGE_TRADES
-                ? "observed"
-                : "limited",
-            text:
-                `رُصدت ${large.count} تنفيذات ضمن شريحة الصفقات الكبيرة، ` +
-                `بقيمة إجمالية ${formatMoney(large.totalValue)}. ` +
-                `كان اتجاه القيمة الأكبر نحو ${side}.`
-        });
+    const capitalAligned = getAlignedImbalance(
+        capital.imbalance,
+        direction
+    );
+
+    const clustersAligned = getAlignedImbalance(
+        clusters.imbalance,
+        direction
+    );
+
+    const largeAvailable =
+        large.count >= CONFIG.MIN_LARGE_TRADES;
+
+    const capitalAvailable =
+        capital.count >= CONFIG.MIN_CAPITAL_TRADES;
+
+    const clustersAvailable =
+        clusters.count >= CONFIG.MIN_CLUSTER_WINDOWS;
+
+    const largeSupport =
+        largeAvailable &&
+        largeAligned >= CONFIG.DIRECTIONAL_THRESHOLD;
+
+    const capitalSupport =
+        capitalAvailable &&
+        capitalAligned >= CONFIG.DIRECTIONAL_THRESHOLD;
+
+    const clustersSupport =
+        clustersAvailable &&
+        clustersAligned >= CONFIG.DIRECTIONAL_THRESHOLD;
+
+    const largeOppose =
+        largeAvailable &&
+        largeAligned <= -CONFIG.DIRECTIONAL_THRESHOLD;
+
+    const capitalOppose =
+        capitalAvailable &&
+        capitalAligned <= -CONFIG.DIRECTIONAL_THRESHOLD;
+
+    const clustersOppose =
+        clustersAvailable &&
+        clustersAligned <= -CONFIG.DIRECTIONAL_THRESHOLD;
+
+    const response = layer.priceResponse.behaviorCounts;
+
+    const responseSupport = direction === "long"
+        ? response.effectiveBuy > response.effectiveSell ||
+          response.possibleDemand >= 2
+        : response.effectiveSell > response.effectiveBuy ||
+          response.possibleSupply >= 2;
+
+    const responseOppose = direction === "long"
+        ? response.effectiveSell >= 2
+        : response.effectiveBuy >= 2;
+
+    const supportCount = [
+        largeSupport,
+        capitalSupport,
+        clustersSupport
+    ].filter(Boolean).length;
+
+    const opposeCount = [
+        largeOppose,
+        capitalOppose,
+        clustersOppose
+    ].filter(Boolean).length;
+
+    const evidenceAvailable = [
+        largeAvailable,
+        capitalAvailable,
+        clustersAvailable
+    ].filter(Boolean).length;
+
+    let status = "unclear";
+    let title = "بصمة رأس المال غير محسومة";
+    let tone = "neutral";
+
+    /*
+     * لا نعتبر المقاييس الثلاثة مصادر مستقلة.
+     * نطلب توافقاً في أكثر من نوع من خصائص التنفيذ.
+     */
+
+    if (
+        supportCount >= 2 &&
+        supportCount > opposeCount
+    ) {
+        status = "aligned";
+        title = "بصمة كبيرة متوافقة مع الصفقة";
+        tone = "positive";
+    } else if (
+        opposeCount >= 2 &&
+        opposeCount > supportCount
+    ) {
+        status = "opposed";
+        title = "بصمة كبيرة في الاتجاه المعاكس";
+        tone = "negative";
+    } else if (
+        supportCount &&
+        opposeCount
+    ) {
+        status = "mixed";
+        title = "بصمة رأس المال مختلطة";
+        tone = "warning";
+    } else if (!evidenceAvailable) {
+        status = "insufficient";
+        title = "لا توجد بصمة كبيرة كافية";
+        tone = "neutral";
+    } else if (supportCount === 1) {
+        status = "possible";
+        title = "ظهرت إشارة كبيرة مؤيدة";
+        tone = "warning";
+    } else if (opposeCount === 1) {
+        status = "possible_opposition";
+        title = "ظهرت إشارة كبيرة معاكسة";
+        tone = "warning";
+    }
+
+    let strength = "ضعيفة";
+
+    if (supportCount >= 2 && largeAvailable && capitalAvailable) {
+        strength = "قوية نسبياً";
+    } else if (supportCount >= 2 || evidenceAvailable >= 2) {
+        strength = "متوسطة";
+    }
+
+    const details = [];
+
+    if (largeAvailable) {
+        details.push(
+            `التنفيذات الكبيرة: ${large.count}، وقيمتها ${formatMoney(large.totalValue)}، وميلها ${largeAligned > 0 ? "مؤيد" : largeAligned < 0 ? "معاكس" : "متوازن"}.`
+        );
     } else {
-        findings.push({
-            name: `${label}: الصفقات الكبيرة`,
-            status: "unobserved",
-            text:
-                `لم تظهر في هذه الطبقة تنفيذات تتجاوز عتبة الصفقات الكبيرة المحسوبة من كامل الفترة.`
-        });
+        details.push("عينة الصفقات الكبيرة غير كافية.");
     }
 
-    if (capital.count) {
-        findings.push({
-            name: `${label}: بصمة رأس المال`,
-            status: capital.status,
-            text:
-                `شريحة أعلى 10% من أحجام التنفيذ احتوت ${capital.count} تنفيذات، ` +
-                `بقيمة ${formatMoney(capital.totalValue)}. ` +
-                `نسبة قيمة الشراء ${formatNumber(capital.buyRatio * 100, 1)}% ` +
-                `ونسبة قيمة البيع ${formatNumber(capital.sellRatio * 100, 1)}%.`
-        });
+    if (capitalAvailable) {
+        details.push(
+            `شريحة رأس المال الأعلى: ${capital.count} تنفيذات، وميلها ${capitalAligned > 0 ? "مؤيد" : capitalAligned < 0 ? "معاكس" : "متوازن"}.`
+        );
     } else {
-        findings.push({
-            name: `${label}: بصمة رأس المال`,
-            status: "unobserved",
-            text:
-                "لم تظهر تنفيذات ضمن شريحة رأس المال الأعلى في هذه الطبقة."
-        });
+        details.push("عينة رأس المال الكبير غير كافية.");
     }
 
-    if (clusters.count) {
-        findings.push({
-            name: `${label}: عناقيد التنفيذ`,
-            status: clusters.status,
-            text:
-                `ظهرت ${clusters.count} نوافذ تنفيذ نشطة بكثافة، ` +
-                `منها ${clusters.buyCount} نوافذ مالت قيمتها للشراء ` +
-                `و${clusters.sellCount} نوافذ مالت قيمتها للبيع.`
-        });
+    if (clustersAvailable) {
+        details.push(
+            `عناقيد التنفيذ: ${clusters.count}، منها ${clusters.buyCount} مائلة للشراء و${clusters.sellCount} مائلة للبيع.`
+        );
     } else {
-        findings.push({
-            name: `${label}: عناقيد التنفيذ`,
-            status: "unobserved",
-            text:
-                "لم تتشكل عناقيد تستوفي حد كثافة التنفيذ المعتمد في هذه الطبقة."
-        });
+        details.push("لم تتشكل عناقيد متكررة كافية.");
     }
 
-    if (response) {
-        findings.push({
-            name: `${label}: استجابة السعر`,
-            status: response.meaningfulWindows
-                ? "observed"
-                : "unclear",
-            text: response.summary
-        });
-    }
-
-    return findings;
+    return {
+        status,
+        title,
+        tone,
+        strength,
+        supportCount,
+        opposeCount,
+        evidenceAvailable,
+        largeSupport,
+        capitalSupport,
+        clustersSupport,
+        largeOppose,
+        capitalOppose,
+        clustersOppose,
+        responseSupport,
+        responseOppose,
+        details,
+        summary: buildFootprintSummary(
+            status,
+            direction,
+            strength,
+            details
+        )
+    };
 }
 
-/* =========================================================
-   فهم حركة السعر بالنسبة إلى سيناريو المتداول
-========================================================= */
+function buildFootprintSummary(status, direction, strength, details) {
+    const directionLabel = direction === "long" ? "LONG" : "SHORT";
 
-function analyzeScenarioPath(
-    direction,
-    position,
-    approach,
-    zone
-) {
+    switch (status) {
+        case "aligned":
+            return `توجد بصمة تنفيذات كبيرة تتوافق مع اتجاه ${directionLabel}، وقوتها ${strength}. ${details.join(" ")}`;
+
+        case "opposed":
+            return `البصمة الكبيرة تميل إلى الاتجاه المعاكس لصفقة ${directionLabel}. ${details.join(" ")}`;
+
+        case "mixed":
+            return `توجد بصمات كبيرة متعارضة، ولا يمكن اعتبارها تأييداً واضحاً لصفقة ${directionLabel}. ${details.join(" ")}`;
+
+        case "possible":
+            return `ظهرت قرينة واحدة مؤيدة لاتجاه ${directionLabel}، لكنها لا تكفي لإثبات نشاط مؤسسي متوافق. ${details.join(" ")}`;
+
+        case "possible_opposition":
+            return `ظهرت قرينة واحدة معاكسة لاتجاه ${directionLabel}، لكنها لا تكفي للحكم بوجود ضغط مؤسسي معاكس. ${details.join(" ")}`;
+
+        default:
+            return `لا تتوفر أدلة كافية لتحديد بصمة رأس المال حول سيناريو ${directionLabel}. ${details.join(" ")}`;
+    }
+}
+
+/* =====================================================
+   مسار الوصول
+===================================================== */
+
+function analyzeScenarioPath(direction, position, approach, zone) {
     const isLong = direction === "long";
 
     const expectedApproach =
         (isLong && position.position === "above") ||
         (!isLong && position.position === "below");
 
-    const approachRange = approach.range;
-
-    let pathDescription = "";
+    let pathDescription;
     let pathStatus = "neutral";
 
     if (position.inside) {
         pathDescription =
-            "السعر المرجعي موجود داخل منطقة الدخول؛ لذلك لا نتعامل معه كرحلة اقتراب من خارج المنطقة.";
+            "السعر المرجعي داخل منطقة الدخول.";
     } else if (expectedApproach) {
         pathDescription = isLong
-            ? "السعر أعلى منطقة LONG. هبوطه باتجاه المنطقة هو مسار الوصول المتوقع في هذا السيناريو، وليس تعارضاً تلقائياً."
-            : "السعر أسفل منطقة SHORT. صعوده باتجاه المنطقة هو مسار الوصول المتوقع في هذا السيناريو، وليس تعارضاً تلقائياً.";
+            ? "هبوط السعر من الأعلى نحو منطقة LONG هو مسار الوصول المتوقع، وليس تعارضاً."
+            : "صعود السعر من الأسفل نحو منطقة SHORT هو مسار الوصول المتوقع، وليس تعارضاً.";
 
         pathStatus = "expected";
     } else {
         pathDescription = isLong
-            ? "السعر أسفل منطقة LONG حالياً؛ أي إنه تجاوز الحد السفلي سعرياً. يلزم فحص التسلسل الزمني قبل وصف ما حدث بأنه اختراق أو عبور مؤكد."
-            : "السعر أعلى منطقة SHORT حالياً؛ أي إنه تجاوز الحد العلوي سعرياً. يلزم فحص التسلسل الزمني قبل وصف ما حدث بأنه اختراق أو عبور مؤكد.";
+            ? "السعر أسفل منطقة LONG حالياً؛ تجاوز الحدود سعرياً، لكن ذلك وحده لا يثبت تسلسل الاختراق."
+            : "السعر أعلى منطقة SHORT حالياً؛ تجاوز الحدود سعرياً، لكن ذلك وحده لا يثبت تسلسل الاختراق.";
 
         pathStatus = "beyond";
     }
 
     let approachInterpretation =
-        "بيانات ممر الوصول لا تكفي لوصف مسار متصل.";
+        "لا توجد عينة كافية لوصف حركة السعر في ممر الوصول.";
 
-    if (approachRange.count >= 2) {
-        const change = approachRange.changePct;
+    if (approach.range.count >= 2) {
+        const change = approach.range.changePct;
 
         if (expectedApproach) {
             const towardZone =
@@ -909,36 +933,33 @@ function analyzeScenarioPath(
                 (!isLong && change > 0);
 
             approachInterpretation = towardZone
-                ? "اتجاه الأسعار في عينة ممر الوصول يتوافق إجمالاً مع الحركة نحو منطقة الدخول. هذا وصف للحركة داخل العينة وليس إثباتاً لمسار متصل."
-                : "اتجاه الأسعار في عينة ممر الوصول لا يظهر حركة صافية واضحة نحو المنطقة، رغم أن بعض التداولات وقعت داخل الممر.";
+                ? "تغير الأسعار في عينة الممر يتوافق إجمالاً مع الاقتراب من المنطقة."
+                : "لم يظهر تغير صافٍ واضح باتجاه المنطقة في عينة الممر.";
         } else {
             approachInterpretation =
-                "السعر ليس في وضع الاقتراب المتوقع من جهة السيناريو؛ ينبغي التعامل مع المنطقة بحذر دون افتراض كيفية وصول السعر إليها.";
+                "السعر ليس في جهة الاقتراب المعتادة لهذا السيناريو.";
         }
     }
-
-    const zoneRange = zone.range;
 
     return {
         expectedApproach,
         pathStatus,
         pathDescription,
         approachInterpretation,
-        approachPriceChangePct: approachRange.changePct,
-        approachTradeCount: approachRange.count,
-        zoneTradeCount: zoneRange.count,
-        zonePriceChangePct: zoneRange.changePct
+        approachPriceChangePct: approach.range.changePct,
+        approachTradeCount: approach.range.count,
+        zoneTradeCount: zone.range.count,
+        zonePriceChangePct: zone.range.changePct
     };
 }
 
-/* =========================================================
-   تقييم الأدلة داخل المنطقة
-========================================================= */
+/* =====================================================
+   تقييم المنطقة
+===================================================== */
 
 function evaluateZoneEvidence(direction, zone) {
     const flow = zone.flow;
-    const response = zone.priceResponse;
-    const count = flow.totalCount;
+    const response = zone.priceResponse.behaviorCounts;
 
     const result = {
         status: "limited",
@@ -948,93 +969,76 @@ function evaluateZoneEvidence(direction, zone) {
         explanation: ""
     };
 
-    if (count < CONFIG.MIN_ZONE_TRADES) {
+    if (flow.totalCount < CONFIG.MIN_ZONE_TRADES) {
         result.status = "not_tested";
         result.neutral.push(
-            `عدد التداولات داخل المنطقة ${count}، وهو أقل من الحد التحليلي ${CONFIG.MIN_ZONE_TRADES}.`
+            `عدد التداولات داخل المنطقة ${flow.totalCount} فقط؛ لا تكفي العينة لتقييم رد الفعل.`
         );
+
         result.explanation =
-            "لا توجد عينة كافية للحكم على سلوك التنفيذ داخل المنطقة. هذا لا يعني أن المنطقة فاشلة ولا يعني وجود دليل ضد الصفقة.";
+            "المنطقة لم تُختبر بعينة تداول كافية. هذا نقص في البيانات وليس دليلاً ضد الصفقة.";
+
         return result;
     }
 
     result.status = "observed";
 
-    const directionalFlow = direction === "long"
-        ? flow.imbalance
-        : -flow.imbalance;
+    const alignedFlow = getAlignedImbalance(
+        flow.imbalance,
+        direction
+    );
 
-    if (directionalFlow >= CONFIG.DIRECTIONAL_THRESHOLD) {
+    if (alignedFlow >= CONFIG.DIRECTIONAL_THRESHOLD) {
         result.supportive.push(
-            direction === "long"
-                ? "قيمة المبادرة الشرائية أعلى بوضوح من المبادرة البيعية داخل المنطقة."
-                : "قيمة المبادرة البيعية أعلى بوضوح من المبادرة الشرائية داخل المنطقة."
+            "المبادرة داخل المنطقة تميل إلى اتجاه الصفقة."
         );
-    } else if (directionalFlow <= -CONFIG.DIRECTIONAL_THRESHOLD) {
+    } else if (alignedFlow <= -CONFIG.DIRECTIONAL_THRESHOLD) {
         result.caution.push(
-            direction === "long"
-                ? "قيمة المبادرة البيعية أعلى بوضوح داخل منطقة LONG."
-                : "قيمة المبادرة الشرائية أعلى بوضوح داخل منطقة SHORT."
+            "المبادرة داخل المنطقة تميل إلى الاتجاه المعاكس."
         );
     } else {
         result.neutral.push(
-            "التوازن بين قيمة الشراء والبيع داخل المنطقة لا يعطي أفضلية اتجاهية واضحة."
+            "المبادرة داخل المنطقة متوازنة نسبياً."
         );
     }
 
-    if (response) {
-        const counts = response.behaviorCounts;
+    if (direction === "long") {
+        if (response.possibleDemand >= 2) {
+            result.supportive.push(
+                "تكرر البيع المبادر دون هبوط متناسب؛ قرينة محتملة على طلب مقابل."
+            );
+        }
 
-        if (direction === "long") {
-            if (counts.effectiveBuy > counts.effectiveSell) {
-                result.supportive.push(
-                    "عدد النوافذ ذات الأثر الشرائي الصاعد أكبر من نوافذ الأثر البيعي الهابط."
-                );
-            }
+        if (response.effectiveSell >= 2) {
+            result.caution.push(
+                "تكرر البيع المبادر المصحوب بهبوط سعري."
+            );
+        }
+    } else {
+        if (response.possibleSupply >= 2) {
+            result.supportive.push(
+                "تكرر الشراء المبادر دون صعود متناسب؛ قرينة محتملة على عرض مقابل."
+            );
+        }
 
-            if (counts.possibleDemand >= 2) {
-                result.supportive.push(
-                    "ظهرت نوافذ شهدت بيعاً مبادراً دون هبوط متناسب؛ وهي قرينة محتملة على طلب مقابل."
-                );
-            }
-
-            if (counts.effectiveSell > counts.effectiveBuy) {
-                result.caution.push(
-                    "ظهرت نوافذ كان فيها ضغط البيع مصحوباً بهبوط سعري فعلي."
-                );
-            }
-        } else {
-            if (counts.effectiveSell > counts.effectiveBuy) {
-                result.supportive.push(
-                    "عدد النوافذ ذات الأثر البيعي الهابط أكبر من نوافذ الأثر الشرائي الصاعد."
-                );
-            }
-
-            if (counts.possibleSupply >= 2) {
-                result.supportive.push(
-                    "ظهرت نوافذ شهدت شراءً مبادراً دون صعود متناسب؛ وهي قرينة محتملة على عرض مقابل."
-                );
-            }
-
-            if (counts.effectiveBuy > counts.effectiveSell) {
-                result.caution.push(
-                    "ظهرت نوافذ كان فيها ضغط الشراء مصحوباً بصعود سعري فعلي."
-                );
-            }
+        if (response.effectiveBuy >= 2) {
+            result.caution.push(
+                "تكرر الشراء المبادر المصحوب بصعود سعري."
+            );
         }
     }
 
     result.explanation =
         result.supportive.length || result.caution.length
-            ? "توجد أدلة داخل المنطقة، لكنها تحتاج إلى قراءة مشتركة مع حجم العينة واستجابة السعر وبصمة التنفيذات الكبيرة."
-            : "التداولات داخل المنطقة لم تنتج دليلاً اتجاهياً واضحاً.";
+            ? "توجد قرائن على سلوك السوق داخل المنطقة، ويجب قراءتها مع بصمة التنفيذات الكبيرة."
+            : "لم يظهر سلوك اتجاهي حاسم داخل المنطقة.";
 
     return result;
 }
 
-/* =========================================================
-   التقييم الاستراتيجي النهائي
-========================================================= */
+/* =====================================================
+   القرار النهائي: يركز على بصمة رأس المال
+===================================================== */
 
 function evaluateStrategy(
     direction,
@@ -1043,246 +1047,190 @@ function evaluateStrategy(
     globalLayer,
     approachLayer,
     zoneLayer,
-    zoneEvaluation
+    zoneEvaluation,
+    footprint
 ) {
-    const reasons = [];
     const supportive = [];
     const caution = [];
     const neutral = [];
+    const reasons = [];
 
-    const isLong = direction === "long";
-
-    const directionName = isLong ? "LONG" : "SHORT";
+    const directionLabel = direction === "long" ? "LONG" : "SHORT";
 
     const zoneWasTested =
         zoneEvaluation.status === "observed";
 
-    for (const item of zoneEvaluation.supportive) {
-        supportive.push(item);
+    const referenceLayer =
+        zoneWasTested
+            ? zoneLayer
+            : approachLayer.range.count >= CONFIG.MIN_ZONE_TRADES
+                ? approachLayer
+                : globalLayer;
+
+    const referenceLayerName =
+        zoneWasTested
+            ? "داخل منطقة الدخول"
+            : referenceLayer === approachLayer
+                ? "ممر الوصول"
+                : "الفترة العامة";
+
+    if (footprint.status === "aligned") {
+        supportive.push(
+            `بصمة التنفيذات الكبيرة تميل إلى اتجاه ${directionLabel}.`
+        );
+    } else if (
+        footprint.status === "opposed" ||
+        footprint.status === "possible_opposition"
+    ) {
+        caution.push(
+            "ظهرت بصمة تنفيذات كبيرة تميل إلى الاتجاه المعاكس."
+        );
+    } else if (
+        footprint.status === "mixed"
+    ) {
+        neutral.push(
+            "بصمة رأس المال متضاربة بين الشراء والبيع."
+        );
+    } else {
+        neutral.push(
+            "لا توجد بصمة كبيرة كافية لتأكيد اتجاه رأس المال."
+        );
     }
 
-    for (const item of zoneEvaluation.caution) {
-        caution.push(item);
+    if (zoneWasTested) {
+        supportive.push(...zoneEvaluation.supportive);
+        caution.push(...zoneEvaluation.caution);
+        neutral.push(...zoneEvaluation.neutral);
+    } else {
+        neutral.push(
+            "منطقة الدخول لم توفر عينة كافية لاختبار سلوك رأس المال داخلها."
+        );
     }
 
-    for (const item of zoneEvaluation.neutral) {
-        neutral.push(item);
+    const response = referenceLayer.priceResponse.behaviorCounts;
+
+    if (direction === "long") {
+        if (response.possibleDemand >= 2) {
+            supportive.push(
+                "تكرر البيع المبادر دون هبوط متناسب؛ وهذا يتوافق مع احتمال وجود طلب مقابل."
+            );
+        }
+
+        if (response.effectiveSell >= 3) {
+            caution.push(
+                "تكرر ضغط بيع مبادر أحدث هبوطاً سعرياً فعلياً."
+            );
+        }
+    } else {
+        if (response.possibleSupply >= 2) {
+            supportive.push(
+                "تكرر الشراء المبادر دون صعود متناسب؛ وهذا يتوافق مع احتمال وجود عرض مقابل."
+            );
+        }
+
+        if (response.effectiveBuy >= 3) {
+            caution.push(
+                "تكرر ضغط شراء مبادر أحدث صعوداً سعرياً فعلياً."
+            );
+        }
     }
 
     if (scenario.expectedApproach) {
-        supportive.push(
-            isLong
-                ? "موقع السعر أعلى منطقة LONG يجعل الهبوط نحوها مسار وصول متوقعاً، ولا يصح اعتباره إشارة سلبية بذاته."
-                : "موقع السعر أسفل منطقة SHORT يجعل الصعود نحوها مسار وصول متوقعاً، ولا يصح اعتباره إشارة سلبية بذاته."
-        );
-    }
-
-    if (approachLayer.range.count) {
-        const approachResponse = approachLayer.priceResponse;
-
-        if (approachResponse) {
-            const counts = approachResponse.behaviorCounts;
-
-            if (isLong && counts.possibleDemand >= 2) {
-                supportive.push(
-                    "في ممر الوصول ظهرت نوافذ بيع مبادر دون استجابة هبوطية متناسبة؛ قد تكون هذه قرينة على طلب مقابل أثناء الاقتراب."
-                );
-            }
-
-            if (!isLong && counts.possibleSupply >= 2) {
-                supportive.push(
-                    "في ممر الوصول ظهرت نوافذ شراء مبادر دون استجابة صعودية متناسبة؛ قد تكون هذه قرينة على عرض مقابل أثناء الاقتراب."
-                );
-            }
-
-            if (isLong && counts.effectiveSell >= 3) {
-                caution.push(
-                    "تكرر ضغط بيع مبادر مصحوب بهبوط سعري فعلي في ممر الوصول؛ هذه معلومة تستحق المراقبة، لكنها لا تلغي سيناريو LONG وحدها."
-                );
-            }
-
-            if (!isLong && counts.effectiveBuy >= 3) {
-                caution.push(
-                    "تكرر ضغط شراء مبادر مصحوب بصعود سعري فعلي في ممر الوصول؛ هذه معلومة تستحق المراقبة، لكنها لا تلغي سيناريو SHORT وحدها."
-                );
-            }
-        }
-    } else {
         neutral.push(
-            "لا توجد تداولات كافية في ممر الوصول لتحليل بصمة التنفيذ خلاله."
+            "حركة السعر نحو منطقة الدخول متوافقة مع سيناريو الوصول، ولا تُحسب ضد الصفقة."
         );
-    }
-
-    const globalResponse = globalLayer.priceResponse;
-
-    if (globalResponse) {
-        const counts = globalResponse.behaviorCounts;
-
-        if (isLong && counts.possibleDemand >= 3) {
-            supportive.push(
-                "على مستوى الفترة كاملة ظهرت عدة نوافذ بيع مبادر لم ينتج عنها هبوط متناسب؛ نمط يتوافق مع وجود طلب مقابل محتمل."
-            );
-        }
-
-        if (!isLong && counts.possibleSupply >= 3) {
-            supportive.push(
-                "على مستوى الفترة كاملة ظهرت عدة نوافذ شراء مبادر لم ينتج عنها صعود متناسب؛ نمط يتوافق مع وجود عرض مقابل محتمل."
-            );
-        }
-    }
-
-    const large = zoneWasTested
-        ? zoneLayer.largeTrades
-        : approachLayer.largeTrades;
-
-    const capital = zoneWasTested
-        ? zoneLayer.capital
-        : approachLayer.capital;
-
-    if (large.count >= CONFIG.MIN_LARGE_TRADES) {
-        const alignedLargeFlow = isLong
-            ? large.imbalance > CONFIG.DIRECTIONAL_THRESHOLD
-            : large.imbalance < -CONFIG.DIRECTIONAL_THRESHOLD;
-
-        const opposingLargeFlow = isLong
-            ? large.imbalance < -CONFIG.DIRECTIONAL_THRESHOLD
-            : large.imbalance > CONFIG.DIRECTIONAL_THRESHOLD;
-
-        if (alignedLargeFlow) {
-            supportive.push(
-                `اتجاه قيمة الصفقات الكبيرة في ${zoneWasTested ? "المنطقة" : "ممر الوصول"} يميل إلى اتجاه سيناريو ${directionName}.`
-            );
-        } else if (opposingLargeFlow) {
-            neutral.push(
-                `قيمة الصفقات الكبيرة في ${zoneWasTested ? "المنطقة" : "ممر الوصول"} تميل إلى الاتجاه المقابل؛ ويجب تفسير ذلك مع استجابة السعر، لا باعتباره رفضاً آلياً للصفقة.`
-            );
-        }
-    }
-
-    if (capital.count >= CONFIG.MIN_CAPITAL_TRADES) {
-        const alignedCapital = isLong
-            ? capital.imbalance > CONFIG.DIRECTIONAL_THRESHOLD
-            : capital.imbalance < -CONFIG.DIRECTIONAL_THRESHOLD;
-
-        if (alignedCapital) {
-            supportive.push(
-                "شريحة التنفيذات الأعلى قيمة تميل إلى اتجاه سيناريو الصفقة في هذه الطبقة."
-            );
-        }
-    }
-
-    if (!zoneWasTested) {
-        reasons.push({
-            name: "اختبار منطقة الدخول",
-            status: "pending",
-            text:
-                "المنطقة لم توفر حتى الآن عينة تداول كافية للحكم على رد فعل السوق داخلها. هذا نقص في دليل الاختبار، وليس دليلاً ضد الصفقة."
-        });
-    } else {
-        reasons.push({
-            name: "اختبار منطقة الدخول",
-            status: "observed",
-            text: zoneEvaluation.explanation
-        });
     }
 
     reasons.push({
-        name: "مسار الوصول",
-        status: scenario.expectedApproach ? "expected" : "context",
-        text: scenario.pathDescription + " " + scenario.approachInterpretation
+        name: "بصمة رأس المال",
+        status: footprint.status,
+        text: footprint.summary
+    });
+
+    reasons.push({
+        name: "منطقة الدخول",
+        status: zoneWasTested ? "observed" : "pending",
+        text: zoneEvaluation.explanation
     });
 
     reasons.push({
         name: "استجابة السعر",
         status: "observed",
-        text:
-            "استجابة السعر للمبادرة: " +
-            (zoneLayer.priceResponse?.summary || "لا توجد بيانات كافية داخل المنطقة.")
+        text: referenceLayer.priceResponse.summary
     });
 
     reasons.push({
-        name: "البصمة الكبيرة",
-        status: large.count >= CONFIG.MIN_LARGE_TRADES
-            ? "observed"
-            : "limited",
-        text:
-            `عدد التنفيذات الكبيرة في الطبقة المرجعية ${large.count}، ` +
-            `وقيمتها الإجمالية ${formatMoney(large.totalValue)}.`
-    });
-
-    reasons.push({
-        name: "بصمة رأس المال",
-        status: capital.count >= CONFIG.MIN_CAPITAL_TRADES
-            ? "observed"
-            : "limited",
-        text:
-            `عدد تنفيذات شريحة رأس المال الأعلى ${capital.count}، ` +
-            `وقيمتها الإجمالية ${formatMoney(capital.totalValue)}.`
+        name: "مسار الوصول",
+        status: scenario.pathStatus,
+        text: scenario.pathDescription + " " + scenario.approachInterpretation
     });
 
     let verdict = "insufficient";
-    let title = "المعطيات لا تكفي للحكم";
+    let title = "لا توجد بصمة كافية";
     let tone = "neutral";
     let explanation = "";
 
-    if (!zoneWasTested && (supportive.length || caution.length)) {
-        verdict = "context";
-        title = "بصمة مرصودة — المنطقة لم تُختبر بعد";
-        tone = "warning";
-
-        explanation =
-            `رُصدت إشارات ذات معنى في بيانات السوق وممر الوصول، لكن منطقة ${directionName} لم توفر عينة تداول كافية لاختبار رد فعل السعر داخلها. ` +
-            "هذا ليس رفضاً للسيناريو ولا تأكيداً نهائياً له. راقب ما سيحدث عند وصول السعر إلى المنطقة، خصوصاً العلاقة بين المبادرة الكبيرة واستجابة السعر.";
-    } else if (!zoneWasTested) {
-        verdict = "insufficient";
-        title = "المنطقة لم تُختبر بعد";
-        tone = "neutral";
-
-        explanation =
-            "لا توجد عينة كافية من التداولات داخل المنطقة، كما أن الأدلة المتاحة خارجها لا تمنح أفضلية واضحة. عدم وجود تأكيد لا يعني وجود تعارض، ولا يمنعك من تنفيذ استراتيجيتك.";
-    } else if (
-        supportive.length >= 2 &&
-        supportive.length > caution.length
-    ) {
+    if (footprint.status === "aligned") {
         verdict = "support";
-        title = "الأدلة تميل إلى دعم السيناريو";
+        title = "بصمة رأس مال كبيرة مؤيدة";
         tone = "positive";
 
         explanation =
-            `توجد عدة قرائن تتوافق مع سيناريو ${directionName}، خصوصاً في سلوك التنفيذات واستجابة السعر. ` +
-            "هذا دعم احتمالي مبني على البيانات المرصودة، وليس ضماناً للارتداد أو نجاح الصفقة.";
-    } else if (
-        caution.length >= 2 &&
-        caution.length > supportive.length
-    ) {
+            `رُصدت بصمة تنفيذات كبيرة تتوافق مع اتجاه ${directionLabel}. ` +
+            (zoneWasTested
+                ? "كما ظهرت تداولات كافية داخل منطقة الدخول لاختبار سلوكها."
+                : "لكن منطقة الدخول لم تُختبر بعد بعينة كافية؛ البصمة المؤيدة لا تثبت أن هذه الجهات ستدخل عند المنطقة.");
+    } else if (footprint.status === "opposed") {
         verdict = "oppose";
-        title = "توجد أدلة تستدعي الحذر";
+        title = "بصمة رأس مال كبيرة معاكسة";
         tone = "negative";
 
         explanation =
-            `بعض الأدلة داخل منطقة ${directionName} أو حولها لا تتوافق جيداً مع السيناريو، خصوصاً عندما تقترن المبادرة المقابلة بأثر سعري فعلي. ` +
-            "هذه نتيجة تحذيرية وليست قرار منع؛ قد تبقى استراتيجيتك صالحة وفق شروطك الخاصة.";
-    } else if (supportive.length && caution.length) {
+            `البصمة المرصودة تميل إلى الاتجاه المعاكس لصفقة ${directionLabel}. ` +
+            "هذا تحذير مهم يستحق الانتباه، لكنه لا يمنعك من تنفيذ استراتيجيتك.";
+    } else if (
+        footprint.status === "mixed" ||
+        supportive.length && caution.length
+    ) {
         verdict = "mixed";
-        title = "الأدلة مختلطة";
+        title = "بصمة رأس المال مختلطة";
         tone = "warning";
 
         explanation =
-            "توجد قرائن مؤيدة وأخرى تستدعي الحذر. لا يظهر تفوق واضح لطرف واحد، ولذلك الأهم هو متابعة سلوك التنفيذات الكبيرة واستجابة السعر بدلاً من اختزال الصورة في إشارة واحدة.";
+            "هناك نشاط كبير، لكن اتجاهه غير متجانس أو أن الأدلة المؤيدة والمعاكسة متداخلة. لا توجد أفضلية مؤسسية واضحة.";
+    } else if (footprint.status === "possible") {
+        verdict = "context";
+        title = "إشارة كبيرة مؤيدة — تحتاج دليلاً";
+        tone = "warning";
+
+        explanation =
+            "ظهرت قرينة على نشاط كبير في اتجاه الصفقة، لكنها غير كافية لتأكيد وجود بصمة مؤسسية متماسكة.";
+    } else if (footprint.status === "possible_opposition") {
+        verdict = "context";
+        title = "إشارة كبيرة معاكسة — تحتاج متابعة";
+        tone = "warning";
+
+        explanation =
+            "ظهرت قرينة على نشاط كبير معاكس، لكنها لا تكفي وحدها لإثبات سيطرة رأس مال معاكس.";
     } else {
         verdict = "insufficient";
-        title = "لا توجد أفضلية واضحة";
+        title = "لا توجد بصمة كبيرة واضحة";
         tone = "neutral";
 
         explanation =
-            "البيانات المتاحة لا تمنح أفضلية واضحة لسيناريو الصفقة ولا تقدم تعارضاً قوياً. هذا يعني أن الرادار لم يجد دليلاً حاسماً، وليس أن الصفقة غير صالحة.";
+            "لم تظهر أدلة كافية على نشاط رأس مال كبير متماسك حول منطقة الدخول. هذا لا يعني أن الصفقة فاشلة؛ يعني أن الرادار لا يملك دليلاً مؤسسياً واضحاً.";
+    }
+
+    if (!zoneWasTested) {
+        explanation +=
+            " المنطقة لم تُختبر بعد بعينة كافية، ولذلك لا يمكن الجزم بسلوك الأموال الكبيرة عند وصول السعر إليها.";
     }
 
     return {
         verdict,
         title,
         tone,
-        direction: directionName,
+        direction: directionLabel,
         explanation,
         supportive,
         caution,
@@ -1294,194 +1242,10 @@ function evaluateStrategy(
             neutral: neutral.length
         },
         zoneTested: zoneWasTested,
-        advisoryOnly: true
+        advisoryOnly: true,
+        footprint,
+        referenceLayer: referenceLayerName
     };
 }
 
-/* =========================================================
-   بناء ملخص الأدلة
-========================================================= */
-
-function buildEvidence(globalLayer, approachLayer, zoneLayer) {
-    return {
-        global: globalLayer,
-        approach: approachLayer,
-        zone: zoneLayer,
-
-        largeTrades: globalLayer.largeTrades,
-        clusters: globalLayer.clusters,
-        capital: globalLayer.capital,
-        activity: globalLayer.activity,
-
-        historicalInteraction: {
-            global: globalLayer.priceResponse,
-            approach: approachLayer.priceResponse,
-            zone: zoneLayer.priceResponse
-        },
-
-        findings: [
-            ...interpretFootprint(globalLayer, "الفترة كاملة"),
-            ...interpretFootprint(approachLayer, "ممر الوصول"),
-            ...interpretFootprint(zoneLayer, "داخل المنطقة")
-        ]
-    };
-}
-
-/* =========================================================
-   المحلل الرئيسي
-========================================================= */
-
-export async function analyzeStrategy(settings) {
-    if (!settings?.strategy) {
-        throw new Error("إعدادات منطقة الدخول غير موجودة");
-    }
-
-    const upper = Number(settings.strategy.upper);
-    const lower = Number(settings.strategy.lower);
-    const direction = String(
-        settings.strategy.direction || "long"
-    ).toLowerCase();
-
-    if (
-        !Number.isFinite(upper) ||
-        !Number.isFinite(lower) ||
-        upper <= 0 ||
-        lower <= 0 ||
-        upper < lower
-    ) {
-        throw new Error("حدود منطقة الدخول غير صحيحة");
-    }
-
-    if (!["long", "short"].includes(direction)) {
-        throw new Error("اتجاه الصفقة يجب أن يكون LONG أو SHORT");
-    }
-
-    const market = await fetchMarketData(settings);
-
-    const trades = validateTrades(market?.trades || []);
-
-    if (!trades.length) {
-        throw new Error("لم يتم العثور على تداولات صالحة في الفترة المحددة");
-    }
-
-    const referencePrice = getReferencePrice(trades);
-
-    /*
-     * نحسب العتبات من كامل العينة مرة واحدة.
-     * ثم نطبقها على الطبقات الثلاث حتى تكون المقارنة عادلة.
-     */
-    const thresholds = {
-        large: getLargeTradeThreshold(trades),
-        capital: getCapitalThreshold(trades)
-    };
-
-    const position = analyzeZonePosition(
-        referencePrice,
-        upper,
-        lower
-    );
-
-    const approachTrades = getApproachTrades(
-        trades,
-        referencePrice,
-        upper,
-        lower
-    );
-
-    const zoneTrades = trades.filter(trade =>
-        insideZone(trade, upper, lower)
-    );
-
-    const globalLayer = analyzeLayer(
-        trades,
-        thresholds
-    );
-
-    const approachLayer = analyzeLayer(
-        approachTrades,
-        thresholds
-    );
-
-    const zoneLayer = analyzeLayer(
-        zoneTrades,
-        thresholds
-    );
-
-    const scenario = analyzeScenarioPath(
-        direction,
-        position,
-        approachLayer,
-        zoneLayer
-    );
-
-    const zoneEvaluation = evaluateZoneEvidence(
-        direction,
-        zoneLayer
-    );
-
-    const evaluation = evaluateStrategy(
-        direction,
-        position,
-        scenario,
-        globalLayer,
-        approachLayer,
-        zoneLayer,
-        zoneEvaluation
-    );
-
-    const evidence = buildEvidence(
-        globalLayer,
-        approachLayer,
-        zoneLayer
-    );
-
-    const limitations = [
-        "الصفقات الكبيرة لا تكشف هوية المتداول أو الجهة المالكة لها.",
-        "لا يمكن إثبات أن عدة تنفيذات تعود إلى حساب واحد من بيانات Binance العامة.",
-        "التحليل يرصد المبادرة الشرائية والبيعية، ولا يكشف الأوامر المخفية أو دفتر الأوامر.",
-        "تباين المبادرة مع استجابة السعر قرينة محتملة على وجود طرف مقابل، وليس إثباتاً قاطعاً للامتصاص.",
-        "الطبقات والتحليلات الأربع مشتقة من مجموعة التداولات نفسها، ولذلك لا تمثل أربعة مصادر إحصائية مستقلة.",
-        "النوافذ الزمنية الفارغة لا تُعامل كنوافذ متجاورة؛ التحليل مبني على نوافذ النشاط التي ظهرت فيها تداولات.",
-        "السعر المرجعي هو آخر تنفيذ في البيانات التاريخية المسترجعة، وليس سعراً لحظياً مستقلاً.",
-        "اكتمال عملية جلب الصفحات لا يثبت أن Binance توفر كل التاريخ الممكن للفترة المطلوبة."
-    ];
-
-    const dataQuality = {
-        tradeCount: trades.length,
-        globalWindowCount: globalLayer.priceResponse.totalWindows,
-        approachTradeCount: approachTrades.length,
-        zoneTradeCount: zoneTrades.length,
-        referencePrice,
-        firstTradeTime: trades[0].time,
-        lastTradeTime: trades[trades.length - 1].time,
-        fetchComplete: market?.complete === true,
-        fetchPages: market?.pages ?? null,
-        fetchTotalTrades: market?.totalTrades ?? trades.length
-    };
-
-    return {
-        market,
-        strategy: {
-            upper,
-            lower,
-            direction,
-            symbol: market.symbol || settings.symbol
-        },
-
-        referencePrice,
-        position,
-        scenario,
-
-        evaluation,
-        evidence,
-        dataQuality,
-        limitations,
-
-        summary: {
-            verdict: evaluation.verdict,
-            title: evaluation.title,
-            explanation: evaluation.explanation
-        }
-    };
-}
-
+/*
