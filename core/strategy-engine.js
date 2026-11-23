@@ -1298,4 +1298,190 @@ function evaluateStrategy(
     };
 }
 
-/* =
+/* =========================================================
+   بناء ملخص الأدلة
+========================================================= */
+
+function buildEvidence(globalLayer, approachLayer, zoneLayer) {
+    return {
+        global: globalLayer,
+        approach: approachLayer,
+        zone: zoneLayer,
+
+        largeTrades: globalLayer.largeTrades,
+        clusters: globalLayer.clusters,
+        capital: globalLayer.capital,
+        activity: globalLayer.activity,
+
+        historicalInteraction: {
+            global: globalLayer.priceResponse,
+            approach: approachLayer.priceResponse,
+            zone: zoneLayer.priceResponse
+        },
+
+        findings: [
+            ...interpretFootprint(globalLayer, "الفترة كاملة"),
+            ...interpretFootprint(approachLayer, "ممر الوصول"),
+            ...interpretFootprint(zoneLayer, "داخل المنطقة")
+        ]
+    };
+}
+
+/* =========================================================
+   المحلل الرئيسي
+========================================================= */
+
+export async function analyzeStrategy(settings) {
+    if (!settings?.strategy) {
+        throw new Error("إعدادات منطقة الدخول غير موجودة");
+    }
+
+    const upper = Number(settings.strategy.upper);
+    const lower = Number(settings.strategy.lower);
+    const direction = String(
+        settings.strategy.direction || "long"
+    ).toLowerCase();
+
+    if (
+        !Number.isFinite(upper) ||
+        !Number.isFinite(lower) ||
+        upper <= 0 ||
+        lower <= 0 ||
+        upper < lower
+    ) {
+        throw new Error("حدود منطقة الدخول غير صحيحة");
+    }
+
+    if (!["long", "short"].includes(direction)) {
+        throw new Error("اتجاه الصفقة يجب أن يكون LONG أو SHORT");
+    }
+
+    const market = await fetchMarketData(settings);
+
+    const trades = validateTrades(market?.trades || []);
+
+    if (!trades.length) {
+        throw new Error("لم يتم العثور على تداولات صالحة في الفترة المحددة");
+    }
+
+    const referencePrice = getReferencePrice(trades);
+
+    /*
+     * نحسب العتبات من كامل العينة مرة واحدة.
+     * ثم نطبقها على الطبقات الثلاث حتى تكون المقارنة عادلة.
+     */
+    const thresholds = {
+        large: getLargeTradeThreshold(trades),
+        capital: getCapitalThreshold(trades)
+    };
+
+    const position = analyzeZonePosition(
+        referencePrice,
+        upper,
+        lower
+    );
+
+    const approachTrades = getApproachTrades(
+        trades,
+        referencePrice,
+        upper,
+        lower
+    );
+
+    const zoneTrades = trades.filter(trade =>
+        insideZone(trade, upper, lower)
+    );
+
+    const globalLayer = analyzeLayer(
+        trades,
+        thresholds
+    );
+
+    const approachLayer = analyzeLayer(
+        approachTrades,
+        thresholds
+    );
+
+    const zoneLayer = analyzeLayer(
+        zoneTrades,
+        thresholds
+    );
+
+    const scenario = analyzeScenarioPath(
+        direction,
+        position,
+        approachLayer,
+        zoneLayer
+    );
+
+    const zoneEvaluation = evaluateZoneEvidence(
+        direction,
+        zoneLayer
+    );
+
+    const evaluation = evaluateStrategy(
+        direction,
+        position,
+        scenario,
+        globalLayer,
+        approachLayer,
+        zoneLayer,
+        zoneEvaluation
+    );
+
+    const evidence = buildEvidence(
+        globalLayer,
+        approachLayer,
+        zoneLayer
+    );
+
+    const limitations = [
+        "الصفقات الكبيرة لا تكشف هوية المتداول أو الجهة المالكة لها.",
+        "لا يمكن إثبات أن عدة تنفيذات تعود إلى حساب واحد من بيانات Binance العامة.",
+        "التحليل يرصد المبادرة الشرائية والبيعية، ولا يكشف الأوامر المخفية أو دفتر الأوامر.",
+        "تباين المبادرة مع استجابة السعر قرينة محتملة على وجود طرف مقابل، وليس إثباتاً قاطعاً للامتصاص.",
+        "الطبقات والتحليلات الأربع مشتقة من مجموعة التداولات نفسها، ولذلك لا تمثل أربعة مصادر إحصائية مستقلة.",
+        "النوافذ الزمنية الفارغة لا تُعامل كنوافذ متجاورة؛ التحليل مبني على نوافذ النشاط التي ظهرت فيها تداولات.",
+        "السعر المرجعي هو آخر تنفيذ في البيانات التاريخية المسترجعة، وليس سعراً لحظياً مستقلاً.",
+        "اكتمال عملية جلب الصفحات لا يثبت أن Binance توفر كل التاريخ الممكن للفترة المطلوبة."
+    ];
+
+    const dataQuality = {
+        tradeCount: trades.length,
+        globalWindowCount: globalLayer.priceResponse.totalWindows,
+        approachTradeCount: approachTrades.length,
+        zoneTradeCount: zoneTrades.length,
+        referencePrice,
+        firstTradeTime: trades[0].time,
+        lastTradeTime: trades[trades.length - 1].time,
+        fetchComplete: market?.complete === true,
+        fetchPages: market?.pages ?? null,
+        fetchTotalTrades: market?.totalTrades ?? trades.length
+    };
+
+    return {
+        market,
+        strategy: {
+            upper,
+            lower,
+            direction,
+            symbol: market.symbol || settings.symbol
+        },
+
+        referencePrice,
+        position,
+        scenario,
+
+        evaluation,
+        evidence,
+        dataQuality,
+        limitations,
+
+        summary: {
+            verdict: evaluation.verdict,
+            title: evaluation.title,
+            explanation: evaluation.explanation
+        }
+    };
+}
+
